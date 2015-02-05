@@ -4,20 +4,16 @@
 Polar2Grid
 ==========
 
-Polar2Grid is a software package providing scripts, utilities, and a series
-of functions and classes for reading
-polar-orbiting satellite data, remapping or gridding that data, and writing
-it to a file format to be used by other software. Polar2grid is mainly used
-through one or more :term:`glue scripts <glue script>` that execute a common
-sequence of
-functions known as ":term:`The Chain`". These functions being called act
-as a toolbox for software developers to make their own scripts if the provided
-:term:`glue scripts <glue script>` don't fit their needs.
+Polar2Grid is a set of tools for extracting swath data from earth-observing satellite instruments,
+remapping it to uniform grids, and writing that gridded data to a new file format.
+Polar2Grid was created by scientists and software developers at the
+`SSEC <http://www.ssec.wisc.edu>`_. It is distributed as part of the
+`CSPP project <http://cimss.ssec.wisc.edu/cspp/>`_ for
+processing of data received via direct broadcast antennas. Although Polar2Grid was created to serve the direct
+broadcast community, it can be used on most archived data files.
 
-Code repository: https://github.com/davidh-ssec/polar2grid
-
-If you are a developer wishing to add your own frontend or backend please
-see the :doc:`Developer's Guide <dev_guide/index>` for details on how to do so.
+The features provided by Polar2Grid are accessible via bash scripts, command line tools, and a set of python packages.
+These methods give scientists and programmers options for using Polar2Grid in a way most comfortable to them.
 
 Original scripts and automation included as part of this package are
 distributed under the
@@ -27,47 +23,48 @@ executable files included as part of this software package are copyrighted
 and licensed by their respective organizations, and distributed consistent
 with their licensing terms.
 
+.. Documentation <http://www.ssec.wisc.edu/software/polar2grid/>
+
+`GitHub Repository <https://github.com/davidh-ssec/polar2grid>`_
+
+`Contact Us <http://cimss.ssec.wisc.edu/contact-form/index.php?name=CSPP%20Questions>`_
+
 Contents
 --------
 
 .. toctree::
-    :maxdepth: 2
+    :maxdepth: 1
     :numbered:
 
     installation
-    Overview <chain>
-    glue_scripts/index
+    design_overview
+    getting_started
     frontends/index
+    remapping
     backends/index
+    compositors/index
     rescaling
     utilscripts
-    release_notes
-    constants
-    glossary
-    tests/index
-
-Grids
------
-
-.. toctree::
-    :maxdepth: 3
-
+    NEWS
     grids
+    glossary
 
 Developer's Guide
 -----------------
 
 .. toctree::
-    :maxdepth: 2
+    :maxdepth: 1
     :numbered:
 
     Introduction <dev_guide/index>
     dev_guide/dev_env
+    dev_guide/containers
     dev_guide/glue_scripts
     dev_guide/frontends
     dev_guide/grids
     dev_guide/remapping
     dev_guide/backends
+    dev_guide/compositors
     dev_guide/rescaling
     dev_guide/swbundle
 
@@ -75,7 +72,7 @@ API
 ---
 
 .. toctree::
-    :maxdepth: 3
+    :maxdepth: 1
    
     api/polar2grid
     api/polar2grid.viirs

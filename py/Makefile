@@ -30,21 +30,15 @@
 
 INSTALL_DIR ?= ./python
 DIST_DIR ?= ./dist
-
-CORE_PKG_DIR   = polar2grid_core
-VIIRS_PKG_DIR  = polar2grid_viirs
-MODIS_PKG_DIR  = polar2grid_modis
-CREFL_PKG_DIR  = polar2grid_crefl
 MAIN_PKG_DIR   = polar2grid
 
 # Make sure target names are just the dir name with a suffix
 # See targets for substitution
-ALL_PKG_DIRS   = $(CORE_PKG_DIR) $(VIIRS_PKG_DIR) $(MODIS_PKG_DIR) $(CREFL_PKG_DIR) $(MAIN_PKG_DIR)
+ALL_PKG_DIRS   = polar2grid_core polar2grid_viirs polar2grid_modis polar2grid_crefl polar2grid_mirs polar2grid_drrtv polar2grid_iasi $(MAIN_PKG_DIR)
+ALL_PKG_INSTALL  = $(ALL_PKG_DIRS:=_install)
 ALL_PKG_SDIST  = $(ALL_PKG_DIRS:=_sdist)
-#ALL_PKG_SDIST  = polar2grid_core_sdist polar2grid_viirs_sdist polar2grid_sdist
-ALL_PKG_DEV    = polar2grid_core_dev polar2grid_viirs_dev polar2grid_modis_dev polar2grid_crefl_dev polar2grid_dev
-#DOC_DIR        = /home/davidh/test_doc
-DOC_DIR        = /var/apache/www/htdocs/software/polar2grid
+ALL_PKG_DEV    = $(ALL_PKG_DIRS:=_dev)
+DOC_DIR        ?= /var/apache/www/htdocs/software/polar2grid
 
 EGG_REPOS_MACHINE = birch
 EGG_REPOS_DIR = /var/apache/larch/htdocs/eggs/repos/polar2grid/
@@ -54,9 +48,15 @@ all: all_sdist
 
 ### PYTHON PACKAGING ###
 
+all_install: $(ALL_PKG_INSTALL)
+
 all_sdist: $(ALL_PKG_SDIST) clean_sdist_build
 
 all_dev: $(ALL_PKG_DEV)
+
+$(ALL_PKG_INSTALL): $(INSTALL_DIR)
+	cd $(@:_install=); \
+	python setup.py install --prefix=$(INSTALL_DIR)
 
 $(ALL_PKG_SDIST): $(DIST_DIR)
 	cd $(@:_sdist=); \
@@ -99,6 +99,7 @@ clean_sdist:
 clean_sdist_build:
 	for pkg_dir in $(ALL_PKG_DIRS); do \
 		rm -rf $$pkg_dir/dist; \
+		rm -rf $$pkg_dir/build; \
 	done
 
 clean:	clean_sdist	clean_sdist_build

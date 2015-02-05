@@ -40,7 +40,8 @@ def histogram_equalization (data, mask_to_equalize,
                             # these parameters don't do anything, they're just here to mirror those in the other call
                             do_log_scale=False,
                             log_offset=None,
-                            local_radius_px=None,) :
+                            local_radius_px=None,
+                            out=None) :
     """
     Perform a histogram equalization on the data selected by mask_to_equalize.
     The data will be separated into number_of_bins levels for equalization and
@@ -52,7 +53,8 @@ def histogram_equalization (data, mask_to_equalize,
     
     Note: the data will be changed in place.
     """
-    
+
+    out = out if out is not None else data.copy()
     mask_to_use = mask_to_equalize if valid_data_mask is None else valid_data_mask
     
     log.debug("    determining DNB data range for histogram equalization")
@@ -65,13 +67,13 @@ def histogram_equalization (data, mask_to_equalize,
     cumulative_dist_function, temp_bins = _histogram_equalization_helper (data[concervative_mask], number_of_bins, clip_limit=clip_limit, slope_limit=slope_limit)
     
     # linearly interpolate using the distribution function to get the new values
-    data[mask_to_equalize] = numpy.interp(data[mask_to_equalize], temp_bins[:-1], cumulative_dist_function)
+    out[mask_to_equalize] = numpy.interp(data[mask_to_equalize], temp_bins[:-1], cumulative_dist_function)
     
     # if we were asked to, normalize our data to be between zero and one, rather than zero and number_of_bins
     if do_zerotoone_normalization :
-        data = _linear_normalization_from_0to1 (data, mask_to_equalize, number_of_bins)
+        _linear_normalization_from_0to1 (out, mask_to_equalize, number_of_bins)
     
-    return data
+    return out
 
 def local_histogram_equalization (data, mask_to_equalize, valid_data_mask=None, number_of_bins=1000,
                                   std_mult_cutoff=3.0,
@@ -80,8 +82,9 @@ def local_histogram_equalization (data, mask_to_equalize, valid_data_mask=None, 
                                   clip_limit=60.0, #20.0,
                                   slope_limit=3.0, #0.5,
                                   do_log_scale=True,
-                                  log_offset=0.00001 # can't take the log of zero, so the offset may be needed; pass 0.0 if your data doesn't need it
-                                   ) :
+                                  log_offset=0.00001, # can't take the log of zero, so the offset may be needed; pass 0.0 if your data doesn't need it
+                                  out=None
+                                  ) :
     """
     equalize the provided data (in the mask_to_equalize) using adaptive histogram equalization
     tiles of width/height (2 * local_radius_px + 1) will be calculated and results for each pixel will be bilinerarly interpolated from the nearest 4 tiles
@@ -93,7 +96,8 @@ def local_histogram_equalization (data, mask_to_equalize, valid_data_mask=None, 
     
     returns the equalized data
     """
-    
+
+    out = out if out is not None else numpy.zeros_like(data)
     # if we don't have a valid mask, use the mask of what we should be equalizing
     if valid_data_mask is None:
         valid_data_mask = mask_to_equalize
@@ -160,11 +164,7 @@ def local_histogram_equalization (data, mask_to_equalize, valid_data_mask=None, 
             all_bin_information          [num_row_tile].append(temp_bins)
     
     # get the tile weight array so we can use it to interpolate our data
-    tile_weights = _calculate_weights (tile_size)
-    
-    # if we are taking the log of our data, we can safely take the log of all of it now
-    if do_log_scale :
-        data[valid_data_mask] = numpy.log(data[valid_data_mask] + log_offset) 
+    tile_weights = _calculate_weights(tile_size)
     
     # now loop through our tiles and linearly interpolate the equalized versions of the data
     for num_row_tile in range(row_tiles) :
@@ -177,25 +177,27 @@ def local_histogram_equalization (data, mask_to_equalize, valid_data_mask=None, 
             max_col = min_col + tile_size
             
             # for convenience, pull some of these tile sized chunks out
-            temp_mask_to_equalize    = mask_to_equalize[min_row:max_row, min_col:max_col]
-            temp_data_to_equalize    = data[min_row:max_row, min_col:max_col][temp_mask_to_equalize]
+            temp_all_data = data[min_row:max_row, min_col:max_col].copy()
+            temp_mask_to_equalize = mask_to_equalize[min_row:max_row, min_col:max_col]
             temp_all_valid_data_mask = valid_data_mask[min_row:max_row, min_col:max_col]
-            temp_all_valid_data      = data[min_row:max_row, min_col:max_col][temp_all_valid_data_mask]
-            
+
             # if we have any data in this tile, calculate our weighted sum
-            if temp_mask_to_equalize.any() :
-                
+            if temp_mask_to_equalize.any():
+                if do_log_scale:
+                    temp_all_data[temp_all_valid_data_mask] = numpy.log(temp_all_data[temp_all_valid_data_mask] + log_offset)
+                temp_data_to_equalize = temp_all_data[temp_mask_to_equalize]
+                temp_all_valid_data = temp_all_data[temp_all_valid_data_mask]
+
                 # a place to hold our weighted sum that represents the interpolated contributions
                 # of the histogram equalizations from the surrounding tiles
-                temp_sum = numpy.zeros(temp_data_to_equalize.shape, dtype=data.dtype)
-                
+                temp_sum = numpy.zeros_like(temp_data_to_equalize)
+
                 # how much weight were we unable to use because those tiles fell off the edge of the image?
-                unused_weight = numpy.zeros((tile_size, tile_size), dtype=tile_weights.dtype)
-                
+                unused_weight = numpy.zeros(temp_data_to_equalize.shape, dtype=tile_weights.dtype)
+
                 # loop through all the surrounding tiles and process their contributions to this tile
-                for weight_row in range(3) :
-                    for weight_col in range(3) :
-                        
+                for weight_row in range(3):
+                    for weight_col in range(3):
                         # figure out which adjacent tile we're processing (in overall tile coordinates instead of relative to our current tile)
                         calculated_row = num_row_tile - 1 + weight_row
                         calculated_col = num_col_tile - 1 + weight_col
@@ -203,27 +205,28 @@ def local_histogram_equalization (data, mask_to_equalize, valid_data_mask=None, 
                         # if we're inside the tile array and the tile we're processing has a histogram equalization for us to use, process it
                         if ( (calculated_row >= 0) and (calculated_row < row_tiles) and
                              (calculated_col >= 0) and (calculated_col < col_tiles) and
-                             (all_bin_information          [calculated_row][calculated_col] is not None) and
+                             (all_bin_information[calculated_row][calculated_col] is not None) and
                              (all_cumulative_dist_functions[calculated_row][calculated_col] is not None)) :
                             
                             # equalize our current tile using the histogram equalization from the tile we're processing
                             temp_equalized_data = numpy.interp(temp_all_valid_data,
-                                                               all_bin_information          [calculated_row][calculated_col][:-1],
+                                                               all_bin_information[calculated_row][calculated_col][:-1],
                                                                all_cumulative_dist_functions[calculated_row][calculated_col])
                             temp_equalized_data = temp_equalized_data[temp_mask_to_equalize[temp_all_valid_data_mask]]
                             
                             # add the contribution for the tile we're processing to our weighted sum
-                            temp_sum = temp_sum + (temp_equalized_data * tile_weights[weight_row, weight_col][temp_mask_to_equalize])
+                            temp_sum += (temp_equalized_data * tile_weights[weight_row, weight_col][temp_mask_to_equalize])
                             
                         else : # if the tile we're processing doesn't exist, hang onto the weight we would have used for it so we can correct that later
-                            unused_weight = unused_weight + tile_weights[weight_row, weight_col]
-                
+                            unused_weight -= tile_weights[weight_row, weight_col][temp_mask_to_equalize]
+
                 # if we have unused weights, scale our values to correct for that
-                if (numpy.sum(unused_weight) > 0) :
-                    temp_sum = temp_sum / ((unused_weight[temp_mask_to_equalize] * - 1) + 1) # TODO, if the mask masks everything out this will be a zero!
-                
+                if unused_weight.any():
+                    # TODO, if the mask masks everything out this will be a zero!
+                    temp_sum /= unused_weight + 1
+
                 # now that we've calculated the weighted sum for this tile, set it in our data array
-                data[min_row:max_row, min_col:max_col][temp_mask_to_equalize] = temp_sum
+                out[min_row:max_row, min_col:max_col][temp_mask_to_equalize] = temp_sum
                 
                 """
                 # TEMP, test without using weights
@@ -231,12 +234,12 @@ def local_histogram_equalization (data, mask_to_equalize, valid_data_mask=None, 
                                                                                              all_bin_information          [num_row_tile  ][num_col_tile][:-1],
                                                                                              all_cumulative_dist_functions[num_row_tile  ][num_col_tile])
                 """
-    
+
     # if we were asked to, normalize our data to be between zero and one, rather than zero and number_of_bins
     if do_zerotoone_normalization :
-        data = _linear_normalization_from_0to1 (data, mask_to_equalize, number_of_bins)
+        _linear_normalization_from_0to1 (out, mask_to_equalize, number_of_bins)
     
-    return data
+    return out
 
 def _histogram_equalization_helper (valid_data, number_of_bins, clip_limit=None, slope_limit=None) :
     """

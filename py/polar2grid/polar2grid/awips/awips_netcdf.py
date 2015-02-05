@@ -42,23 +42,21 @@ Documentation: http://www.ssec.wisc.edu/software/polar2grid/
 """
 __docformat__ = "restructuredtext en"
 
-from polar2grid.core import Workspace
 from polar2grid.core import roles
-from polar2grid.core.constants import *
 from polar2grid.nc import create_nc_from_ncml
-from polar2grid.core.rescale import Rescaler
-from polar2grid.core.dtype import clip_to_data_type
-from .awips_config import AWIPSConfigReader,CONFIG_FILE as DEFAULT_AWIPS_CONFIG
+from polar2grid.core.rescale import Rescaler, DEFAULT_RCONFIG
+from polar2grid.core.dtype import clip_to_data_type, DTYPE_UINT8
+from .awips_config import AWIPSConfigReader, CONFIG_FILE as DEFAULT_AWIPS_CONFIG
 
-import os, sys, logging
+import os
+import sys
+import logging
 import calendar
-from datetime import datetime
 
-log = logging.getLogger(__name__)
-DEFAULT_8BIT_RCONFIG = "rescale_configs/rescale.8bit.conf"
+LOG = logging.getLogger(__name__)
 
-def create_netcdf(nc_name, image, template, start_dt,
-        channel, source, sat_name):
+
+def create_netcdf(nc_name, image, template, start_dt, channel, source, sat_name):
     """Copy a template file to destination and fill it
     with the provided image data.
 
@@ -67,148 +65,128 @@ def create_netcdf(nc_name, image, template, start_dt,
     nc_name = os.path.abspath(nc_name)
     template = os.path.abspath(template)
     if not os.path.exists(template):
-        log.error("Template does not exist %s" % template)
+        LOG.error("Template does not exist %s" % template)
         raise ValueError("Template does not exist %s" % template)
-
-    if os.path.exists(nc_name):
-        log.error("Output file %s already exists" % nc_name)
-        raise ValueError("Output file %s already exists" % nc_name)
 
     try:
         nc = create_nc_from_ncml(nc_name, template, format="NETCDF3_CLASSIC")
     except StandardError:
-        log.error("Could not create base netcdf from template %s" % template)
-        raise ValueError("Could not create base netcdf from template %s" % template)
+        LOG.error("Could not create base netcdf from template %s" % template)
+        raise
 
     if nc.file_format != "NETCDF3_CLASSIC":
-        log.warning("Expected file format NETCDF3_CLASSIC got %s" % (nc.file_format))
+        LOG.warning("Expected file format NETCDF3_CLASSIC got %s" % (nc.file_format,))
 
     image_var = nc.variables["image"]
     if image_var.shape != image.shape:
-        log.error("Image shapes aren't equal, expected %s got %s" % (str(image_var.shape),str(image.shape)))
-        raise ValueError("Image shapes aren't equal, expected %s got %s" % (str(image_var.shape),str(image.shape)))
+        LOG.error("Image shapes aren't equal, expected %s got %s" % (str(image_var.shape), str(image.shape)))
+        raise ValueError("Image shapes aren't equal, expected %s got %s" % (str(image_var.shape), str(image.shape)))
 
     # Convert to signed byte keeping large values large
     image = clip_to_data_type(image, DTYPE_UINT8)
 
     image_var[:] = image
     time_var = nc.variables["validTime"]
-    time_var[:] = float(calendar.timegm( start_dt.utctimetuple() )) + float(start_dt.microsecond)/1e6
+    time_var[:] = float(calendar.timegm(start_dt.utctimetuple())) + float(start_dt.microsecond)/1e6
 
     # Add AWIPS 2 global attributes
     nc.channel = channel
     nc.source = source
     nc.satelliteName = sat_name
 
-    nc.sync() # Just in case
+    nc.sync()  # Just in case
     nc.close()
-    log.debug("Data transferred into NC file correctly")
+    LOG.debug("Data transferred into NC file correctly")
+
 
 class Backend(roles.BackendRole):
-    removable_file_patterns = [
-            "SSEC_AWIPS_*"
-            ]
+    def __init__(self, backend_configs=None, rescale_configs=None, **kwargs):
+        backend_configs = backend_configs or [DEFAULT_AWIPS_CONFIG]
+        rescale_configs = rescale_configs or [DEFAULT_RCONFIG]
+        self.awips_config_reader = AWIPSConfigReader(*backend_configs)
+        self.rescaler = Rescaler(*rescale_configs, **kwargs)
+        super(Backend, self).__init__(**kwargs)
 
-    def __init__(self, backend_config=None, rescale_config=None, fill_value=DEFAULT_FILL_VALUE):
-        # Load AWIPS backend configuration
-        if backend_config is None:
-            log.debug("Using default AWIPS configuration: '%s'" % DEFAULT_AWIPS_CONFIG)
-            backend_config = DEFAULT_AWIPS_CONFIG
-        self.awips_config_reader = AWIPSConfigReader(backend_config)
+    @property
+    def known_grids(self):
+        return self.awips_config_reader.known_grids
 
-        # Load rescaling configuration
-        if rescale_config is None:
-            log.debug("Using default 8bit rescaling '%s'" % DEFAULT_8BIT_RCONFIG)
-            rescale_config = DEFAULT_8BIT_RCONFIG
-        self.fill_in = fill_value
-        self.fill_out = DEFAULT_FILL_VALUE
-        self.rescaler = Rescaler(rescale_config, fill_in=self.fill_in, fill_out=self.fill_out)
+    def create_output_from_product(self, gridded_product, ncml_template=None, **kwargs):
+        data_type = DTYPE_UINT8
+        inc_by_one = False
+        fill_value = 0
+        awips_info = self.awips_config_reader.get_product_options(gridded_product)
+        output_filename = gridded_product["begin_time"].strftime(awips_info["filename_format"])
 
-    def can_handle_inputs(self, sat, instrument, nav_set_uid, kind, band, data_kind):
-        """Function for backend-calling script to ask if the backend will be
-        able to handle the data that will be processed.  For the AWIPS backend
-        it can handle any gpd grid that it is configured for in
-        polar2grid/awips/awips.conf
+        if os.path.isfile(output_filename):
+            if not self.overwrite_existing:
+                LOG.error("AWIPS file already exists: %s", output_filename)
+                raise RuntimeError("AWIPS file already exists: %s" % (output_filename,))
+            else:
+                LOG.warning("AWIPS file already exists, will overwrite: %s", output_filename)
 
-        It is also assumed that rescaling will be able to handle the `data_kind`
-        provided.
-        """
-        return [ config_info["grid_name"] for config_info in self.awips_config_reader.get_all_matching_entries(sat, instrument, nav_set_uid, kind, band, data_kind) ]
-
-    def create_product(self, sat, instrument, nav_set_uid, kind, band, data_kind, data,
-            start_time=None, end_time=None, grid_name=None,
-            output_filename=None,
-            ncml_template=None, fill_value=None):
-        # Filter out required keywords
-        if grid_name is None:
-            log.error("'grid_name' is a required keyword for this backend")
-            raise ValueError("'grid_name' is a required keyword for this backend")
-        if start_time is None and output_filename is None:
-            log.error("'start_time' is a required keyword for this backend if 'output_filename' is not specified")
-            raise ValueError("'start_time' is a required keyword for this backend if 'output_filename' is not specified")
-
-        fill_in = fill_value or self.fill_in
-        data = self.rescaler(sat, instrument, nav_set_uid, kind, band, data_kind, data, fill_in=fill_in, fill_out=self.fill_out)
-
-        # Get information from the configuration files
-        awips_info = self.awips_config_reader.get_config_entry(sat, instrument, nav_set_uid, kind, band, data_kind, grid_name)
-        # Get the proper output name if it wasn't forced to something else
-        if output_filename is None:
-            output_filename = start_time.strftime(awips_info["nc_format"])
-
+        # Create the netcdf file
         try:
-            create_netcdf(output_filename,
-                    data,
-                    ncml_template or awips_info["ncml_template"],
-                    start_time,
-                    awips_info["awips2_channel"],
-                    awips_info["awips2_source"],
-                    awips_info["awips2_satellitename"]
-                    )
+            LOG.info("Scaling %s data to fit in netcdf file...", gridded_product["product_name"])
+            data = self.rescaler.rescale_product(gridded_product, data_type,
+                                                 inc_by_one=inc_by_one, fill_value=fill_value)
+
+            LOG.info("Writing product %s to AWIPS NetCDF file", gridded_product["product_name"])
+            create_netcdf(output_filename, data, ncml_template or awips_info["ncml_template"],
+                          gridded_product["begin_time"], awips_info["awips2_channel"],
+                          awips_info["awips2_source"], awips_info["awips2_satellite_name"])
         except StandardError:
-            log.error("Error while filling in NC file with data")
+            LOG.error("Error while filling in NC file with data: %s", output_filename)
+            if not self.keep_intermediate and os.path.isfile(output_filename):
+                os.remove(output_filename)
             raise
 
+        return output_filename
 
-def go(img_name, template, nc_name, channel, source, satname):
-    from polar2grid.core import UTC
-    UTC = UTC()
 
-    # Make up an NC name
-    img_name = os.path.abspath(img_name)
-    base_dir,img_fn = os.path.split(img_name)
-    var_name = img_fn.split(".")[0]
-    base_name = os.path.splitext(img_fn)[0]
-    if base_name == '':
-        log.error("Could not extract file's base name %s" % img_name)
-        return False
+def add_backend_argument_groups(parser):
+    group = parser.add_argument_group(title="Backend Initialization")
+    group.add_argument("--backend-configs", nargs="*", dest="backend_configs",
+                       help="alternative backend configuration files")
+    group.add_argument("--rescale-configs", nargs="*", dest="rescale_configs",
+                       help="alternative rescale configuration files")
+    group = parser.add_argument_group(title="Backend Output Creation")
+    group.add_argument("--ncml-template",
+                       help="alternative AWIPS ncml template file from what is configured")
+    return ["Backend Initialization"]
 
-    if nc_name is None:
-        nc_name = base_name + ".nc"
-        nc_path = os.path.join(base_dir, nc_name)
+
+def main():
+    from polar2grid.core.script_utils import create_basic_parser, create_exc_handler, setup_logging
+    from polar2grid.core.containers import GriddedScene, GriddedProduct
+    parser = create_basic_parser(description="Create AWIPS compatible NetCDF files")
+    subgroup_titles = add_backend_argument_groups(parser)
+    parser.add_argument("--scene", required=True, help="JSON SwathScene filename to be remapped")
+    parser.add_argument("-p", "--products", nargs="*", default=None,
+                        help="Specify only certain products from the provided scene")
+    global_keywords = ("keep_intermediate", "overwrite_existing", "exit_on_error")
+    args = parser.parse_args(subgroup_titles=subgroup_titles, global_keywords=global_keywords)
+
+    # Logs are renamed once data the provided start date is known
+    levels = [logging.ERROR, logging.WARN, logging.INFO, logging.DEBUG]
+    setup_logging(console_level=levels[min(3, args.verbosity)], log_filename=args.log_fn)
+    sys.excepthook = create_exc_handler(LOG.name)
+
+    LOG.info("Loading scene or product...")
+    gridded_scene = GriddedScene.load(args.scene)
+    if args.products and isinstance(gridded_scene, GriddedScene):
+        for k in gridded_scene.keys():
+            if k not in args.products:
+                del gridded_scene[k]
+
+    LOG.info("Initializing backend...")
+    backend = Backend(**args.subgroup_args["Backend Initialization"])
+    if isinstance(gridded_scene, GriddedScene):
+        backend.create_output_from_scene(gridded_scene, **args.subgroup_args["Backend Output Creation"])
+    elif isinstance(gridded_scene, GriddedProduct):
+        backend.create_output_from_product(gridded_scene, **args.subgroup_args["Backend Output Creation"])
     else:
-        nc_path = os.path.abspath(nc_name)
-
-    # Open the image file
-    try:
-        W = Workspace(base_dir)
-        img = getattr(W, var_name)
-        data = img.copy()
-    except StandardError:
-        log.error("Could not open img file %s" % img_name, exc_info=1)
-        return False
-
-    # Create the NC file
-    create_netcdf(nc_path, data, template, datetime.utcnow().replace(tzinfo=UTC), channel, source, satname)
-    return True
+        raise ValueError("Unknown Polar2Grid object provided")
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.WARNING)
-    if len(sys.argv) == 6:
-        log.error("Need 6 arguments: <image> <template> <output> <channel> <source> <satname>")
-        log.error("Got %d", len(sys.argv) - 1)
-        sys.exit(-1)
-
-    go(*sys.argv[1:])
-    #for fn in sys.argv[1:]:
-    #    go(fn)
+    sys.exit(main())

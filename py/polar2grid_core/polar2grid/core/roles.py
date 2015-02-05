@@ -1,68 +1,64 @@
 #!/usr/bin/env python
 # encoding: utf-8
+# Copyright (C) 2014 Space Science and Engineering Center (SSEC),
+#  University of Wisconsin-Madison.
+#
+#     This program is free software: you can redistribute it and/or modify
+#     it under the terms of the GNU General Public License as published by
+#     the Free Software Foundation, either version 3 of the License, or
+#     (at your option) any later version.
+#
+#     This program is distributed in the hope that it will be useful,
+#     but WITHOUT ANY WARRANTY; without even the implied warranty of
+#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#     GNU General Public License for more details.
+#
+#     You should have received a copy of the GNU General Public License
+#     along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# This file is part of the polar2grid software package. Polar2grid takes
+# satellite observation data, remaps it, and writes it to a file format for
+# input into another program.
+# Documentation: http://www.ssec.wisc.edu/software/polar2grid/
+#
+#     Written by David Hoese    December 2014
+#     University of Wisconsin-Madison
+#     Space Science and Engineering Center
+#     1225 West Dayton Street
+#     Madison, WI  53706
+#     david.hoese@ssec.wisc.edu
 """Abstract Base Classes for polar2grid components
 
 :author:       David Hoese (davidh)
 :contact:      david.hoese@ssec.wisc.edu
 :organization: Space Science and Engineering Center (SSEC)
-:copyright:    Copyright (c) 2013 University of Wisconsin SSEC. All rights reserved.
-:date:         Jan 2013
+:copyright:    Copyright (c) 2014 University of Wisconsin SSEC. All rights reserved.
+:date:         Dec 2014
 :license:      GNU GPLv3
-
-Copyright (C) 2013 Space Science and Engineering Center (SSEC),
- University of Wisconsin-Madison.
-
-   This program is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, either version 3 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-This file is part of the polar2grid software package. Polar2grid takes
-satellite observation data, remaps it, and writes it to a file format for
-input into another program.
-Documentation: http://www.ssec.wisc.edu/software/polar2grid/
-
-    Written by David Hoese    January 2013
-    University of Wisconsin-Madison 
-    Space Science and Engineering Center
-    1225 West Dayton Street
-    Madison, WI  53706
-    david.hoese@ssec.wisc.edu
 
 """
 __docformat__ = "restructuredtext en"
 
-from .constants import *
-from .time_utils import utc_now
-from .fbf import data_type_to_fbf_type
+from polar2grid.core.dtype import dtype_to_str
 
 import os
 import sys
 import logging
 import re
+from datetime import datetime
 from StringIO import StringIO
-from abc import ABCMeta,abstractmethod,abstractproperty
+from ConfigParser import SafeConfigParser, Error as ConfigParserError
+from abc import ABCMeta, abstractmethod, abstractproperty
 
 try:
     # try getting setuptools/distribute's version of resource retrieval first
-    import pkg_resources
-    get_resource_string = pkg_resources.resource_string
+    from pkg_resources import resource_string as get_resource_string
 except ImportError:
-    import pkgutil
-    get_resource_string = pkgutil.get_data
+    from pkgutil import get_data as get_resource_string
 
-log = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
-### Copied and modified from patch to allow abstractclassmethods in Python 2.7 ###
-### URL: http://bugs.python.org/issue5867 ###
+
 class abstractclassmethod(classmethod):
     """A decorator indicating abstract classmethods.
 
@@ -74,6 +70,8 @@ class abstractclassmethod(classmethod):
             @abstractclassmethod
             def my_abstract_classmethod(cls, ...):
 
+    ### Copied and modified from patch to allow abstractclassmethods in Python 2.7 ###
+    ### URL: http://bugs.python.org/issue5867 ###
     """
     __isabstractmethod__ = True
 
@@ -93,6 +91,8 @@ class abstractstaticmethod(staticmethod):
             @abstractstaticmethod
             def my_abstract_staticmethod(...):
 
+    ### Copied and modified from patch to allow abstractclassmethods in Python 2.7 ###
+    ### URL: http://bugs.python.org/issue5867 ###
     """
     __isabstractmethod__ = True
 
@@ -100,7 +100,165 @@ class abstractstaticmethod(staticmethod):
         callable.__isabstractmethod__ = True
         super(abstractstaticmethod, self).__init__(callable)
 
-### End of Copy ###
+
+class INIConfigReader(object):
+    """Base class for INI configuration file readers.
+
+    Basic .ini file format, but certain fields are identifying fields that identify the product being configured.
+
+    Class attribute `id_fields` is used to read in certain section options as identifying fields. The values should be
+    a conversion function to go from the read-in string to the proper type.
+    """
+    id_fields = None
+    sep_char = ":"
+
+    def __init__(self, *config_files, **kwargs):
+        if self.id_fields is None:
+            LOG.error("INIConfigReader not properly setup. Class attribute `id_fields` must be initialized")
+            raise RuntimeError("INIConfigReader not properly setup. Class attribute `id_fields` must be initialized")
+
+        self.section_prefix = kwargs.pop("section_prefix", None)
+        self.config = []
+        self.config_files = config_files
+        file_objs = set([f for f in self.config_files if not isinstance(f, (str, unicode))])
+        filepaths = set([f for f in self.config_files if isinstance(f, (str, unicode))])
+
+        # defaults to string (meaning nothing happens)
+        # this only affects non-ID fields
+        # self.keyword_types = defaultdict(kwargs.pop("default_keyword_type", str))
+        self.float_kwargs = kwargs.pop("float_kwargs", [])
+        self.int_kwargs = kwargs.pop("int_kwargs", [])
+        self.boolean_kwargs = kwargs.pop("boolean_kwargs", [])
+
+        # Need to have defaults for id fields
+        for k in self.id_fields:
+            kwargs.setdefault(k, None)
+        self.config_parser = SafeConfigParser(kwargs, allow_no_value=True)
+        if file_objs:
+            for fp in file_objs:
+                self.config_parser.readfp(fp)
+        else:
+            for fp in filepaths:
+                fo = self.open_config_file(fp)
+                try:
+                    self.config_parser.readfp(fo, fp)
+                except ConfigParserError:
+                    LOG.warning("Could not parse config file: %s", fp)
+        self.load_config()
+        if not self.config:
+            LOG.error("No valid configuration sections found with prefix '%s'", self.section_prefix)
+            raise ValueError("No valid configuration sections found")
+
+    def open_config_file(self, config_file):
+        """Load one configuration file into internal storage.
+
+        If the config_file is a relative path string and can't be found it
+        will be loaded from a package relative location. If it can't be found
+        in the package an exception is raised.
+        """
+        # If we were provided a string filepath then open the file
+        if isinstance(config_file, str):
+            if not os.path.isabs(config_file):
+                # Its not an absolute path, lets see if its relative path
+                cwd_config = os.path.join(os.path.curdir, config_file)
+                if os.path.exists(cwd_config):
+                    config_file = cwd_config
+                    config_file = open(config_file, 'r')
+                else:
+                    # they have specified a package provided file
+                    LOG.info("Loading package provided configuration file: '%s'" % (config_file,))
+                    try:
+                        parts = config_file.split(":")
+                        mod_part, file_part = parts if len(parts) == 2 else ("", parts[0])
+                        mod_part = mod_part or self.__module__
+                        config_str = get_resource_string(mod_part, file_part)
+                    except StandardError:
+                        LOG.error("Configuration file '%s' was not found" % (config_file,))
+                        raise
+                    config_file = StringIO(config_str)
+            else:
+                config_file = open(config_file, 'r')
+        return config_file
+
+    def load_config(self):
+        # Organize rescaling configuration sections
+        for section in self.config_parser.sections():
+            if self.section_prefix and not section.startswith(self.section_prefix):
+                continue
+
+            id_values = [self.config_parser.get(section, id_field) for id_field in self.id_fields]
+            num_wildcards = 0
+            id_regexes = []
+            for v in id_values:
+                if not v or v.lower() == "none":
+                    num_wildcards += 1
+                    id_regexes.append(".*")
+                else:
+                    id_regexes.append(v)
+            id_regex = "^" + self.sep_char.join(id_regexes) + "$"
+
+            try:
+                this_regex_obj = re.compile(id_regex)
+            except re.error:
+                LOG.error("Invalid configuration identifying information (not a valid regular expression): '%s'" % (str(id_regex),))
+                raise ValueError("Invalid configuration identifying information (not a valid regular expression): '%s'" % (str(id_regex),))
+
+            # Just need to know what section I should look in
+            config_key = (num_wildcards, this_regex_obj, section)
+            self.config.append(config_key)
+        # If 2 or more entries have the same number of wildcards they may not be sorted optimally
+        # (i.e. specific first field highest)
+        self.config.sort()
+
+    def get_config_section(self, **kwargs):
+        if len(kwargs) != len(self.id_fields):
+            LOG.error("Incorrect number of identifying arguments, expected %d, got %d" % (len(self.id_fields), len(kwargs)))
+            LOG.debug("Got %r; Expected %r", kwargs, self.id_fields)
+            raise ValueError("Incorrect number of identifying arguments, expected %d, got %d" % (len(self.id_fields), len(kwargs)))
+
+        id_key = self.sep_char.join(str(kwargs.get(k, None)) for k in self.id_fields)
+        for num_wildcards, regex_obj, section in self.config:
+            if regex_obj.match(id_key):
+                LOG.debug("Key '%s' matched config regular expression '%s'", id_key, regex_obj.pattern)
+                return section
+        LOG.debug("No match found in config for key: %s", id_key)
+        return None
+
+    def get_config_options(self, **kwargs):
+        allow_default = kwargs.pop("allow_default", True)
+        section = self.get_config_section(**kwargs)
+        if section is not None:
+            LOG.debug("Using configuration section: %s", section)
+            section_options = dict((k, self.config_parser.get(section, k)) for k in self.config_parser.options(section))
+            # gotta get the defaults too
+            for k, v in self.config_parser.defaults().items():
+                if k not in section_options:
+                    section_options[k] = v
+        elif allow_default:
+            LOG.debug("Using default configuration section")
+            section_options = self.config_parser.defaults().copy()
+        else:
+            LOG.error("No configuration section found")
+            raise RuntimeError("No configuration section found")
+
+        # Convert values
+        for k, v in section_options.items():
+            if k in self.float_kwargs:
+                section_options[k] = float(v)
+                continue
+            if k in self.int_kwargs:
+                section_options[k] = int(v)
+                continue
+            if k in self.boolean_kwargs:
+                section_options[k] = v == "True"
+                continue
+
+        for k, v in kwargs.items():
+            # overwrite any wildcards with what we were provided
+            section_options[k] = v
+
+        return section_options
+
 
 class CSVConfigReader(object):
     """Base class for CSV configuration file readers.
@@ -157,11 +315,11 @@ class CSVConfigReader(object):
                     config_file = open(config_file, 'r')
                 else:
                     # they have specified a package provided file
-                    log.info("Loading package provided rescale config: '%s'" % (config_file,))
+                    LOG.info("Loading package provided rescale config: '%s'" % (config_file,))
                     try:
                         config_str = get_resource_string(self.__module__, config_file)
                     except StandardError:
-                        log.error("Rescale config '%s' was not found" % (config_file,))
+                        LOG.error("Rescale config '%s' was not found" % (config_file,))
                         raise
                     config_file = StringIO(config_str)
             else:
@@ -181,7 +339,7 @@ class CSVConfigReader(object):
 
     def parse_config_parts(self, parts):
         if len(parts) < self.min_num_elements:
-            log.error("Line does not have correct number of elements: '%s'" % (str(parts),))
+            LOG.error("Line does not have correct number of elements: '%s'" % (str(parts),))
             if self.ignore_bad_lines: return
             raise ValueError("Line does not have correct number of elements: '%s'" % (str(parts),))
 
@@ -195,7 +353,7 @@ class CSVConfigReader(object):
             entry_info = self.parse_entry_parts(entry_parts)
         except StandardError:
             if self.ignore_bad_lines: return
-            log.error("Bad configuration line: '%s'" % (str(parts),))
+            LOG.error("Bad configuration line: '%s'" % (str(parts),))
             raise
 
         self.config_storage.append((id_regex_obj,entry_info))
@@ -214,7 +372,7 @@ class CSVConfigReader(object):
         try:
             this_regex_obj = re.compile(this_regex)
         except re.error:
-            log.error("Invalid configuration identifying information (not valid regular expression): '%s'" % (str(id_parts),))
+            LOG.error("Invalid configuration identifying information (not valid regular expression): '%s'" % (str(id_parts),))
             raise ValueError("Invalid configuration identifying information (not valid regular expression): '%s'" % (str(id_parts),))
 
         return this_regex_obj
@@ -260,13 +418,14 @@ class CSVConfigReader(object):
         as ``NUM_ID_ELEMENTS``.
         """
         if len(args) != self.NUM_ID_ELEMENTS:
-            log.error("Incorrect number of identifying elements when searching configuration")
+            LOG.error("Incorrect number of identifying elements when searching configuration")
             raise ValueError("Incorrect number of identifying elements when searching configuration")
 
-        search_id = "_".join([ (x is not None and x) or "" for x in args ])
-        for regex_pattern,entry_info in self.config_storage:
+        search_id = "_".join([(x is not None and x) or "" for x in args])
+        for regex_pattern, entry_info in self.config_storage:
             m = regex_pattern.match(search_id)
-            if m is None: continue
+            if m is None:
+                continue
 
             entry_info = self.prepare_config_entry(entry_info, args)
             return entry_info
@@ -280,14 +439,15 @@ class CSVConfigReader(object):
         as ``NUM_ID_ELEMENTS``.
         """
         if len(args) != self.NUM_ID_ELEMENTS:
-            log.error("Incorrect number of identifying elements when searching configuration")
+            LOG.error("Incorrect number of identifying elements when searching configuration")
             raise ValueError("Incorrect number of identifying elements when searching configuration")
 
-        search_id = "_".join([ (x is not None and x) or "" for x in args ])
+        search_id = "_".join([(x is not None and x) or "" for x in args])
         matching_entries = []
-        for regex_pattern,entry_info in self.config_storage:
+        for regex_pattern, entry_info in self.config_storage:
             m = regex_pattern.match(search_id)
-            if m is None: continue
+            if m is None:
+                continue
 
             matching_entries.append(self.prepare_config_entry(entry_info, args))
 
@@ -296,298 +456,267 @@ class CSVConfigReader(object):
         else:
             raise ValueError("No config entry found matching: '%s'" % (search_id,))
 
-class RescalerRole(CSVConfigReader):
-    __metaclass__ = ABCMeta
-
-    # Fill values in the input and to set in the output
-    DEFAULT_FILL_IN  = DEFAULT_FILL_VALUE
-    DEFAULT_FILL_OUT = DEFAULT_FILL_VALUE
-
-    NUM_ID_ELEMENTS = 6
-
-    @abstractproperty
-    def default_config_dir(self):
-        """Return the default search path to find a configuration file if
-        the configuration file provided is not an absolute path and the
-        configuration filename was not found in the current working
-        directory.
-
-        This does not work in subclasses since they will be called the
-        function that 'lives' in this file.  Copying and pasting this
-        function is the simplest solution until pkg_resources.
-        """
-        return os.path.split(os.path.realpath(__file__))[0]
-
-    @abstractproperty
-    def known_rescale_kinds(self):
-        """Return a dictionary mapping rescaling kind to scaling
-        function.  This will be used during configuration file parsing
-        to decide if the line is valid.
-
-        A good strategy is to define the dictionary outside this
-        function/property and return a pointer to that class attribute.
-        This way the dictionary isn't created everytime it is accessed, but
-        the property is still read only.
-        """
-        return {}
-
-    def __init__(self, *config_files, **kwargs):
-        """Load the initial configuration file and any other information
-        needed for later rescaling.
-        """
-        self.fill_in = kwargs.pop("fill_in", self.DEFAULT_FILL_IN)
-        self.fill_out = kwargs.pop("fill_out", self.DEFAULT_FILL_OUT)
-        kwargs["min_num_elements"] = kwargs.get("min_num_elements", self.NUM_ID_ELEMENTS+1) # ID + scaling func
-        super(RescalerRole, self).__init__(*config_files, **kwargs)
-
-    def parse_id_parts(self, parts):
-        # Make sure we know the data_kind
-        parts = super(RescalerRole, self).parse_id_parts(parts)
-        return parts
-
-    def parse_entry_parts(self, parts):
-        # Make sure we know the scale kind
-        if parts[0] not in self.known_rescale_kinds:
-            log.error("Rescaling doesn't know the rescaling kind '%s'" % parts[0])
-            if self.ignore_bad_lines:
-                return
-            raise ValueError("Rescaling doesn't know the rescaling kind '%s'" % parts[0])
-        parts = list(parts)
-        parts[0] = self.known_rescale_kinds[parts[0]]
-
-        # FUTURE: Check argument lengths and maybe values per rescale kind 
-
-        parts = super(RescalerRole, self).parse_entry_parts(parts)
-        args = []
-        for x in parts[1:]:
-            if x == "none" or x == "None":
-                args.append(None)
-            else:
-                args.append(float(x))
-
-        return (parts[0], args)
-
-    @abstractmethod
-    def __call__(self, sat, instrument, nav_set_uid, kind, band, data_kind, data):
-        raise NotImplementedError("This function has not been implemented")
 
 class BackendRole(object):
+    """Polar2Grid base class for Backends.
+
+    Backends are responsible for taking image data mapped to a uniform grid, rescaling it, and then writing it
+    to a file format on disk.
+    """
     __metaclass__ = ABCMeta
 
-    # Glob patterns for files that a glue script should remove
-    # default is none
-    removable_file_patterns = []
+    def __init__(self, overwrite_existing=False, keep_intermediate=False, exit_on_error=True, **kwargs):
+        self.overwrite_existing = overwrite_existing
+        self.keep_intermediate = keep_intermediate
+        self.exit_on_error = exit_on_error
 
-    def create_output_filename(self, pattern, sat, instrument, nav_set_uid, kind, band,
-            data_kind, **kwargs):
+    @abstractproperty
+    def known_grids(self):
+        """Provide a list of known grids that this backend knows how to handle. For all grids use `None`.
+        """
+        return None
+
+    def create_output_filename(self, pattern, satellite, instrument, product_name, grid_name, **kwargs):
         """Helper function that will take common meta data and put it into
-        the output filename pattern provided.  The ``*args`` arguments are
-        the same as for `create_product`. If either of the keyword arguments
-        ``start_time`` or ``end_time`` are not specified the other is used
+        the output filename pattern provided. If either of the keyword arguments
+        ``begin_time`` or ``end_time`` are not specified the other is used
         in its place.  If neither are specified the current time in UTC is
         taken.
 
         Some arguments are handled in special ways:
-            - start_time : start_time converted into 5 different strings
+            - begin_time : begin_time is converted into 5 different strings
                 that can each be individually specified in the pattern:
-                    * start_time     : YYYYMMDD_HHMMSS
-                    * start_YYYYMMDD : YYYYMMDD
-                    * start_YYMMDD   : YYMMDD
-                    * start_HHMMSS   : HHMMSS
-                    * start_HHMM     : HHMM
-            - end_time   : Same as start_time
+                    * begin_time     : YYYYMMDD_HHMMSS
+                    * begin_YYYYMMDD : YYYYMMDD
+                    * begin_YYMMDD   : YYMMDD
+                    * begin_HHMMSS   : HHMMSS
+                    * begin_HHMM     : HHMM
+            - end_time   : Same as begin_time
 
         If a keyword is provided that is not recognized it will be provided
         to the pattern after running through a `str` filter.
 
         Possible pattern keywords (\*created internally in this function):
-            - sat             : identifier for the instrument's satellite
+            - satellite       : identifier for the instrument's satellite
             - instrument      : name of the instrument
-            - nav_set_uid     : navigation set unique identifier
-            - kind            : band kind
-            - band            : band identifier or number
+            - product_name    : name of the product in the output
             - data_kind       : kind of data (brightness temperature, radiance, reflectance, etc.)
-            - data_type       : data type name of data in-memory, numpy naming(ex. uint8, int32, real32)
-            - fbf_dtype\*      : data type name of data on-disk, fbf naming (ex. uint1, int4, real4)
+            - data_type       : data type name of data in-memory (ex. uint1, int4, real4)
             - grid_name       : name of the grid the data was mapped to
-            - cols            : number of columns in the data
+            - columns         : number of columns in the data
             - rows            : number of rows in the data
-            - start_time      : start time of the first scan (YYYYMMDD_HHMMSS)
-            - start_YYYYMMDD\* : start date of the first scan
-            - start_YYMMDD\*   : start date of the first scan
-            - start_HHMMSS\*   : start time of the first scan
-            - start_HHMM\*     : start time of the first scan
+            - begin_time      : begin time of the first scan (YYYYMMDD_HHMMSS)
+            - begin_YYYYMMDD\* : begin date of the first scan
+            - begin_YYMMDD\*   : begin date of the first scan
+            - begin_HHMMSS\*   : begin time of the first scan
+            - begin_HHMM\*     : begin time of the first scan
             - end_time        : end time of the first scan. Same keywords as start_time.
 
         >>> from datetime import datetime
-        >>> pattern = "%(sat)s_%(instrument)s_%(kind)s_%(band)s_%(data_kind)s_%(grid_name)s_%(start_time)s.%(data_type)s.%(cols)s.%(rows)s"
+        >>> pattern = "%(satellite)s_%(instrument)s_%(product_name)s_%(data_kind)s_%(grid_name)s_%(start_time)s.%(data_type)s.%(columns)s.%(rows)s"
         >>> class FakeBackend(BackendRole):
-        ...     def create_product(self, *args): pass
-        ...     def can_handle_inputs(self, *args): pass
+        ...     def create_output_from_product(self, gridded_product, **kwargs): pass
+        ...     @property
+        ...     def known_grids(self): return None
         >>> backend = FakeBackend()
         >>> filename = backend.create_output_filename(pattern,
         ...     "npp",
         ...     "viirs",
-        ...     "i_nav",
-        ...     "i",
-        ...     "04",
-        ...     "btemp",
-        ...     grid_name = "wgs84_fit",
-        ...     data_type = "uint8",
-        ...     cols = 2500, rows=3000, start_time=datetime(2012, 11, 10, 9, 8, 7))
+        ...     "i04",
+        ...     data_kind="btemp",
+        ...     grid_name="wgs84_fit",
+        ...     data_type="uint1",
+        ...     columns = 2500, rows=3000, begin_time=datetime(2012, 11, 10, 9, 8, 7))
         >>> print filename
-        npp_viirs_i_04_btemp_wgs84_fit_20121110_090807.uint8.2500.3000
+        npp_viirs_i04_btemp_wgs84_fit_20121110_090807.uint1.2500.3000
 
         """
         # Keyword arguments
-        data_type      = kwargs.pop("data_type", None)
-        grid_name      = str(kwargs.pop("grid_name", None))
-        cols           = kwargs.pop("cols", None)
-        rows           = kwargs.pop("rows", None)
-        start_time_dt  = kwargs.pop("start_time", None)
-        end_time_dt    = kwargs.pop("end_time", None)
+        data_type = kwargs.pop("data_type", None)
+        data_kind = kwargs.pop("data_kind", None)
+        columns = kwargs.pop("columns", None)
+        rows = kwargs.pop("rows", None)
+        begin_time_dt = kwargs.pop("begin_time", None)
+        end_time_dt = kwargs.pop("end_time", None)
 
-        # Convert FBF data type
-        try:
-            fbf_dtype  = data_type_to_fbf_type(data_type) if data_type is not None else data_type
-        except ValueError:
-            fbf_dtype  = None
+        if data_type and not isinstance(data_type, (str, unicode)):
+            data_type = dtype_to_str(data_type)
 
-        # Convert start time and end time
-        if start_time_dt is None and end_time_dt is None:
-            start_time_dt = end_time_dt = utc_now()
-        elif start_time_dt is None:
-            start_time_dt = end_time_dt
+        # Convert begin time and end time
+        if begin_time_dt is None and end_time_dt is None:
+            begin_time_dt = end_time_dt = datetime.utc_now()
+        elif begin_time_dt is None:
+            begin_time_dt = end_time_dt
         elif end_time_dt is None:
-            end_time_dt   = start_time_dt
+            end_time_dt   = begin_time_dt
 
-        start_time     = start_time_dt.strftime("%Y%m%d_%H%M%S")
-        start_YYYYMMDD = start_time_dt.strftime("%Y%m%d")
-        start_YYMMDD   = start_time_dt.strftime("%y%m%d")
-        start_HHMMSS   = start_time_dt.strftime("%H%M%S")
-        start_HHMM     = start_time_dt.strftime("%H%M")
-        end_time       = end_time_dt.strftime("%Y%m%d_%H%M%S")
-        end_YYYYMMDD   = end_time_dt.strftime("%Y%m%d")
-        end_YYMMDD     = end_time_dt.strftime("%y%m%d")
-        end_HHMMSS     = end_time_dt.strftime("%H%M%S")
-        end_HHMM       = end_time_dt.strftime("%H%M")
+        begin_time = begin_time_dt.strftime("%Y%m%d_%H%M%S")
+        begin_YYYYMMDD = begin_time_dt.strftime("%Y%m%d")
+        begin_YYMMDD = begin_time_dt.strftime("%y%m%d")
+        begin_HHMMSS = begin_time_dt.strftime("%H%M%S")
+        begin_HHMM = begin_time_dt.strftime("%H%M")
+        end_time = end_time_dt.strftime("%Y%m%d_%H%M%S")
+        end_YYYYMMDD = end_time_dt.strftime("%Y%m%d")
+        end_YYMMDD = end_time_dt.strftime("%y%m%d")
+        end_HHMMSS = end_time_dt.strftime("%H%M%S")
+        end_HHMM = end_time_dt.strftime("%H%M")
 
         try:
             output_filename = pattern % dict(
-                    sat            = sat,
-                    instrument     = instrument,
-                    nav_set_uid    = nav_set_uid,
-                    kind           = kind,
-                    band           = band,
-                    data_kind      = data_kind,
-                    data_type      = data_type,
-                    fbf_dtype       = fbf_dtype,
-                    grid_name      = grid_name,
-                    cols           = cols,
-                    rows           = rows,
-                    start_time     = start_time,
-                    start_YYYYMMDD = start_YYYYMMDD,
-                    start_YYMMDD   = start_YYMMDD,
-                    start_HHMMSS   = start_HHMMSS,
-                    start_HHMM     = start_HHMM,
-                    end_time       = end_time,
-                    end_YYYYMMDD   = end_YYYYMMDD,
-                    end_YYMMDD     = end_YYMMDD,
-                    end_HHMMSS     = end_HHMMSS,
-                    end_HHMM       = end_HHMM,
-                    **kwargs
-                    )
+                satellite=satellite,
+                instrument=instrument,
+                product_name=product_name,
+                data_kind=data_kind,
+                data_type=data_type,
+                grid_name=grid_name,
+                columns=columns,
+                rows=rows,
+                begin_time=begin_time,
+                begin_YYYYMMDD=begin_YYYYMMDD,
+                begin_YYMMDD=begin_YYMMDD,
+                begin_HHMMSS=begin_HHMMSS,
+                begin_HHMM=begin_HHMM,
+                end_time=end_time,
+                end_YYYYMMDD=end_YYYYMMDD,
+                end_YYMMDD=end_YYMMDD,
+                end_HHMMSS=end_HHMMSS,
+                end_HHMM=end_HHMM,
+                **kwargs
+            )
         except KeyError as e:
-            log.error("Unknown output pattern key: '%s'" % (e.message,))
+            LOG.error("Unknown output pattern key: '%s'" % (e.message,))
             raise
 
         return output_filename
+        pass
 
-    @abstractmethod
-    def can_handle_inputs(self, sat, instrument, nav_set_uid, kind, band, data_kind):
-        """Function that returns the grids that it will be able to handle
-        for the data described by the arguments passed.  It returns either
-        a list of grid names (that must be defined in grids.conf) or it
-        returns a constant defined in `polar2grid.core.constants` for grids.
-        Possible constants are:
+    def create_output_from_scene(self, gridded_scene, **kwargs):
+        """Create output files for each product in the scene.
 
-            - GRIDS_ANY: Any gpd or proj4 grid
-            - GRIDS_ANY_GPD: Any gpd grid
-            - GRIDS_ANY_PROJ4: Any proj4 grid
+        Default implementation is to call `create_output_from_product` for each product in the provided `gridded_scene`.
 
+        :param gridded_scene: `GriddedScene` object to create output from
+        :returns: list of created output files
         """
-        return []
+        output_filenames = []
+        for product_name, gridded_product in gridded_scene.items():
+            try:
+                output_fn = self.create_output_from_product(gridded_product, **kwargs)
+                output_filenames.append(output_fn)
+            except StandardError:
+                LOG.error("Could not create output for '%s'", product_name)
+                if self.exit_on_error:
+                    raise
+                LOG.debug("Backend exception: ", exc_info=True)
+                continue
+        return output_filenames
 
     @abstractmethod
-    def create_product(self, sat, instrument, nav_set_uid, kind, band, data_kind,
-            start_time=None, end_time=None, grid_name=None,
-            output_filename=None):
-        raise NotImplementedError("This function has not been implemented")
+    def create_output_from_product(self, gridded_product, **kwargs):
+        """Create output file for the provided product.
+
+        :param gridded_product: `GriddedProduct` object to create output from
+        :returns: Created output filename
+        """
+        pass
+
 
 class FrontendRole(object):
-    """Polar2grid role for data providing frontends. When provided satellite
-    observation data the frontend should create binary files for each of the
-    bands to be processed and their corresponding navigation data.
+    """Polar2Grid base class for Frontends.
+
+    Frontends are responsible for extracting data from data files and providing that data to other Polar2Grid components
+    as a `SwathScene`.
     """
     __metaclass__ = ABCMeta
+    FILE_EXTENSIONS = []
 
-    @abstractclassmethod
-    def parse_datetimes_from_filepaths(cls, filepaths):
-        """Class method for providing datetimes for each of the input filepaths.
+    def __init__(self, search_paths=None, overwrite_existing=False, keep_intermediate=False, exit_on_error=True,
+                 **kwargs):
+        self.overwrite_existing = overwrite_existing
+        self.keep_intermediate = keep_intermediate
+        self.exit_on_error = exit_on_error
+        self.search_paths = search_paths
+        if not self.search_paths:
+            LOG.info("No files or paths provided as input, will search the current directory...")
+            self.search_paths = ['.']
 
-        This method is used by glue scripts to find the proper datetime to
-        timestamp logs with (usually the earliest). It must ignore (without
-        logging an error/warning) any file that it does not understand since
-        some glue scripts allow an entire directories listing to go to the
-        frontend.
+    @abstractproperty
+    def begin_time(self):
+        """Datetime object of first observed data point loaded by Frontend.
         """
-        raise NotImplementedError("This function has not been implemented")
+        pass
 
-    @abstractclassmethod
-    def sort_files_by_nav_uid(cls, filepaths):
-        """Class method for sorting input filepaths.
-
-        This method is used by glue scripts to organize filepaths into
-        navigation sets that can be used by the `make_swaths` method. It must
-        ignore (without logging an error/warning) any file that it does not
-        understand since some glue scripts
-        allow an entire directories listing to go to the frontend.
-
-        :param filepaths: Absolute paths to input satellite instrument names
-        :type filepaths: list
-        :returns: dictionary of dictionaries. First key is the `nav_set_uid`
-            for that `navigation_set`. Second key is file identifier that
-            can be any arbitrary string. Some frontends use a file pattern
-            as the file identifier. Each file identifier maps to a list
-            of filepaths. Sorted and uniqueness is not guaranteed and is
-            up to the frontend.
-        :rtype: dict( dict( list ) )
+    @abstractproperty
+    def end_time(self):
+        """Datetime object of last observed data point loaded by Frontend.
         """
-        raise NotImplementedError("This function has not been implemented")
+        pass
+
+    @abstractproperty
+    def available_product_names(self):
+        """Names of data products that can be created from the data loaded during initialization.
+        """
+        pass
+
+    @abstractproperty
+    def all_product_names(self):
+        """All product names that this Frontend knows how to create (assuming the proper data is available).
+        """
+        pass
 
     @abstractmethod
-    def make_swaths(self, nav_set_uid, filepaths_dict, **kwargs):
-        """Given satellite instrument data files, create flat binary files
-        for all image data and navigation data. This method should only be
-        called once per navigation set. Navigation filepaths will be derived
-        from the information in the data files and are expected to be in the
-        same directory as the files.
+    def create_scene(self, products=None, **kwargs):
+        """Create a `SwathScene` object with the specified products in it (all raw products by default).
 
-        :param filepaths_dict:
-            absolute paths to satellite instrument data files keyed by a file
-            identifier, where the file identifier is provided by the
-            `sort_files_by_nav_uid` class method of the same frontend.
-        :type filepaths: dict( list )
-
-        :returns:
-            Information describing the data provided that will
-            be used by other polar2grid components. See the
-            Developer's Guide in the official documentation
-            for information on what the meta data dictionary
-            should contain.
-        :rtype: dict
+        :param products: List of product names to create
+        :returns: `SwathScene` object
         """
-        raise NotImplementedError("This function has not been implemented")
+        pass
+
+    def find_files_with_extensions(self, extensions=None, search_paths=None, warn_invalid=True):
+        """Generator that uses `self.search_paths` to yield any file with extensions from `FILE_EXTENSIONS`.
+
+        Extensions must include the period at the beginning (ex: .hdf).
+        """
+        extensions = extensions if extensions is not None else self.FILE_EXTENSIONS
+        search_paths = search_paths if search_paths is not None else self.search_paths
+        for p in search_paths:
+            if os.path.isdir(p):
+                LOG.debug("Searching '%s' for useful files", p)
+                for fn in os.listdir(p):
+                    fp = os.path.join(p, fn)
+                    ext = os.path.splitext(fp)[1]
+                    if ext in extensions:
+                        yield os.path.realpath(fp)
+            elif os.path.isfile(p):
+                ext = os.path.splitext(p)[1]
+                if ext in extensions:
+                    yield os.path.realpath(p)
+                elif warn_invalid:
+                    LOG.warning("File is not a valid file for this frontend: %s", p)
+            else:
+                LOG.error("File or directory does not exist: %s", p)
+
+    def loadable_products(self, desired_products):
+        orig_products = set(desired_products)
+        available_products = self.available_product_names
+        all_products = self.all_product_names
+        doable_products = orig_products & set(available_products)
+        for p in (orig_products - doable_products):
+            if p not in all_products:
+                LOG.error("Unknown product name: %s", p)
+                raise RuntimeError("Unknown product name: %s" % (p,))
+            else:
+                LOG.warning("Missing proper data files to create product: %s", p)
+        products = list(doable_products)
+        if not products:
+            LOG.debug("Original Products:\n\t%r", orig_products)
+            LOG.debug("Available Products:\n\t%r", available_products)
+            LOG.debug("Doable (final) Products:\n\t%r", products)
+            LOG.error("Can not create any of the requested products (missing required data files)")
+            raise RuntimeError("Can not create any of the requested products (missing required data files)")
+        return products
+
 
 class CartographerRole(object):
     """Polar2grid role for managing grids. Grid information such as
@@ -642,6 +771,37 @@ class CartographerRole(object):
         """
         raise NotImplementedError("Child class must implement this method")
 
+
+class CompositorRole(object):
+    __metaclass__ = ABCMeta
+
+    def __init__(self, overwrite_existing=False, keep_intermediate=False, exit_on_error=True, **kwargs):
+        self.overwrite_existing = overwrite_existing
+        self.keep_intermediate = keep_intermediate
+        self.exit_on_error = exit_on_error
+
+    def _create_gridded_product(self, product_name, grid_data, base_product=None, **kwargs):
+        from polar2grid.core.containers import GriddedProduct
+        if base_product is None:
+            base_product = kwargs
+        else:
+            base_product = base_product.copy()
+            base_product.update(kwargs)
+        base_product["product_name"] = product_name
+        base_product["grid_data"] = grid_data
+
+        if base_product.get("grid_definition") is None:
+            msg = "No grid definition provided to base composite on (use `base_product` or `grid_definition`)"
+            LOG.error(msg)
+            raise ValueError(msg)
+
+        return GriddedProduct(**base_product)
+
+    @abstractmethod
+    def modify_scene(self):
+        pass
+
+
 def main():
     """Run some tests on the interfaces/roles
     """
@@ -650,4 +810,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

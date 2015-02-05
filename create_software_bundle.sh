@@ -4,11 +4,12 @@
 # Creates a software bundle directory and a tarball of that directory
 
 SHELLB3_DEFAULT="ftp://ftp.ssec.wisc.edu/pub/shellb3/ShellB3-Linux-x86_64-20140212-r840-core-cspp.tar.gz"
-MS2GT_DOWNLOAD="http://www.ssec.wisc.edu/~davidh/polar2grid/ms2gt/ms2gt0.24a.tar.gz"
+MS2GT_DOWNLOAD="http://www.ssec.wisc.edu/~davidh/polar2grid/ms2gt/fornav"
 BASE_P2G_DIR="$( cd -P "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PY_DIR="$BASE_P2G_DIR"/py
 BUNDLE_SCRIPTS_DIR="$BASE_P2G_DIR"/swbundle
 VCREFL_DIR="$BASE_P2G_DIR"/viirs_crefl
+MCREFL_DIR="$BASE_P2G_DIR"/modis_crefl
 
 oops() {
     echo "OOPS: $*"
@@ -67,20 +68,17 @@ rm -f "ShellB3/tests"
 echo "Copying user grid directory to software bundle"
 cp -r ${BUNDLE_SCRIPTS_DIR}/grid_configs .
 
-# Create ms2gt binaries (use prebuilt milliCentOS5)
-echo "Downloading ms2gt prebuilt binaries..."
-wget ${MS2GT_DOWNLOAD} || oops "Could now download ms2gt"
-echo "Extracting ms2gt binaries..."
-tar -xzf "$(basename "$MS2GT_DOWNLOAD")"
-echo "Removing downloaded ms2gt tarball"
-rm -r "$(basename "$MS2GT_DOWNLOAD")"
-echo "Moving extracted ms2gt directory to 'ms2gt'"
-mv ms2gt* ms2gt || oops "Could not move extracted ms2gt directory to proper name"
-
-# Create the VIIRS CREFL utilities
+# Create the 'bin' directory
 echo "Creating software bundle bin directory..."
 cd "$SB_NAME"
 mkdir bin
+cd bin
+
+# Create ms2gt binaries (use prebuilt milliCentOS5)
+echo "Downloading ms2gt prebuilt binaries and placing them in 'bin'..."
+wget ${MS2GT_DOWNLOAD} || oops "Could now download ms2gt"
+
+# Create the VIIRS CREFL utilities
 echo "Getting prebuilt VIIRS CREFL binaries..."
 cd "$VCREFL_DIR"
 make clean
@@ -93,7 +91,17 @@ mv CMGDEM.hdf "$SB_NAME"/bin/
 cp run_viirs_crefl.sh "$SB_NAME"/bin/
 chmod a+x "$SB_NAME"/bin/run_viirs_crefl.sh
 
-# Create the 'bin' directory
+# Create the MODIS CREFL utilities
+echo "Getting prebuilt MODIS CREFL binaries..."
+cd "$MCREFL_DIR"
+make clean
+make prebuilt || oops "Couldn't get prebuilt MODIS CREFL binaries"
+chmod a+x crefl
+mv crefl "$SB_NAME"/bin/
+mv tbase.hdf "$SB_NAME"/bin/
+cp run_modis_crefl.sh "$SB_NAME"/bin/
+chmod a+x "$SB_NAME"/bin/run_modis_crefl.sh
+
 echo "Copying bash scripts to software bundle bin"
 cd "$SB_NAME"
 cp ${BUNDLE_SCRIPTS_DIR}/*.sh ${BUNDLE_SCRIPTS_DIR}/*.txt bin/
@@ -103,12 +111,11 @@ ln -s ../ms2gt/bin/fornav bin/fornav
 
 # Create python packages
 echo "Creating python packages..."
+export PATH=${SB_NAME}/ShellB3/bin:$PATH
 cd "$PY_DIR"
-make clean_sdist
-make all_sdist
-# Pip is probably better, but ShellB3 doesn't use it yet
-echo "Installing python packages into ShellB3 environment..."
-${SB_NAME}/ShellB3/bin/python -m easy_install dist/*.tar.gz || oops "Could not install python packages"
+make clean
+# Have to use 'python setup.py install' because using easy_install on source tarballs doesn't compile extensions for some reason
+CFLAGS="-fno-strict-aliasing -L${SB_NAME}/ShellB3/lib" INSTALL_DIR="${SB_NAME}/ShellB3" make all_install
 
 # Tar up the software bundle
 echo "Creating software bundle tarball..."

@@ -31,6 +31,7 @@ def setup(app):
 # -- General configuration -----------------------------------------------------
 rst_epilog = """
 .. |ssec| replace:: :abbr:`SSEC (Space Science and Engineering Center)`
+.. |cspp| replace:: :abbr:`CSPP (Community Satellite Processing Package)`
 .. |viirs| replace:: :abbr:`VIIRS (Visible/Infrared Imager Radiometer Suite)`
 .. |default_grid_config| replace:: "grids.conf"
 """
@@ -40,7 +41,8 @@ rst_epilog = """
 
 # Add any Sphinx extension module names here, as strings. They can be extensions
 # coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
-extensions = ['sphinx.ext.autodoc', 'sphinx.ext.todo', 'sphinx.ext.coverage', 'sphinx.ext.pngmath', 'sphinx.ext.ifconfig', 'sphinx.ext.viewcode']
+extensions = ['sphinx.ext.autodoc', 'sphinx.ext.graphviz', 'sphinx.ext.todo', 'sphinx.ext.coverage',
+              'sphinx.ext.pngmath', 'sphinx.ext.ifconfig', 'sphinx.ext.viewcode', 'sphinxarg.ext']
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']

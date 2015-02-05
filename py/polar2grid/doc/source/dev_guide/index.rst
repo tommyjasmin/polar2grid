@@ -48,11 +48,13 @@ Code repository: https://github.com/davidh-ssec/polar2grid
 **Developer's Guide Components:**
 
  - :doc:`dev_env`
+ - :doc:`containers`
  - :doc:`glue_scripts`
  - :doc:`frontends`
  - :doc:`grids`
  - :doc:`remapping`
  - :doc:`backends`
+ - :doc:`compositors`
  - :doc:`rescaling`
  - :doc:`swbundle`
 
@@ -62,7 +64,7 @@ Prerequisites
 These polar2grid topics should be understood to get the most out of this
 guide:
 
- - The overall 'flow' of the :doc:`Chain <../chain>`
+ - The general :doc:`design <../design_overview>` of Polar2Grid
  - The responsibilities of a frontend
  - The responsibilities of a backend
  - Package hierarchy and dependencies
