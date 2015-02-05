@@ -44,6 +44,7 @@ Documentation: http://www.ssec.wisc.edu/software/polar2grid/
 
 """
 from polar2grid.proj import Proj
+from pyproj import pj_ellps
 
 __docformat__ = "restructuredtext en"
 
@@ -93,6 +94,8 @@ gpd_conv_funcs = {
         "GRIDWIDTH" : int,
         "GRIDHEIGHT" : int,
         "GRIDMAPUNITSPERCELL" : float,
+        "GRIDMAPUNITSPERCOLUMN" : float,
+        "GRIDMAPUNITSPERROW" : float,
         "GRIDCELLSPERMAPUNIT" : float,
         # mpp file stuff:
         "MAPPROJECTION" : clean_string,
@@ -118,7 +121,8 @@ def parse_gpd_str(gpd_file_str):
     gpd_dict = {}
     lines = gpd_file_str.split("\n")
     for line in lines:
-        if not line: continue
+        if not line or line.startswith("#"):
+            continue
 
         line_parts = line.split(":")
         if len(line_parts) != 2:
@@ -217,6 +221,50 @@ def _parse_meter_degree_param(param):
         param = param[:-1]
     return float(param), convert_to_meters
 
+
+def get_proj4_info(proj4_str):
+    parts = [x.replace("+", "") for x in proj4_str.split(" ")]
+    if "no_defs" in parts:
+        parts.remove("no_defs")
+
+    proj4_dict = dict(p.split("=") for p in parts)
+    # Convert numeric parameters to floats
+    for k in ["lat_0", "lat_1", "lat_2", "lat_ts", "lat_b", "lat_t", "lon_0", "lon_1", "lon_2", "lonc", "a", "b", "es"]:
+        if k in proj4_dict:
+            proj4_dict[k] = float(proj4_dict[k])
+
+    ellps_name = proj4_dict.get("ellps", proj4_dict.get("datum", None))
+    a = proj4_dict.get("a", None)
+    b = proj4_dict.get("b", None)
+    es = proj4_dict.get("es", None)
+    rf = None
+
+    if ellps_name is not None:
+        rf = pj_ellps[ellps_name].get("rf", None)
+        a = a or pj_ellps[ellps_name].get("a", None)
+        b = b or pj_ellps[ellps_name].get("b", None)
+
+    if a is None and b is not None and es is not None:
+        a = b / numpy.sqrt(1.0 - es)
+    if b is None and a is not None:
+        if es is not None:
+            b = a * numpy.sqrt(1.0 - es)
+        elif rf is not None:
+            f = 1.0 / rf
+            b = a * (1.0 - f)
+    if es is None and a is not None and b is not None:
+        es = 1.0 - (b * b) / (a * a)
+
+    if a is None or b is None or es is None:
+        log.error("Could not calculate radii a and b and the eccentricity squared from the PROJ.4 definition")
+        raise ValueError("Could not calculate radii a and b and the eccentricity squared from the PROJ.4 definition")
+
+    proj4_dict["a"] = a
+    proj4_dict["b"] = b
+    proj4_dict["es"] = es
+
+    return proj4_dict
+
 def parse_proj4_config_line(grid_name, parts):
     """Return a dictionary of information for a specific PROJ.4 grid from
     a grid configuration line. ``parts`` should be every comma-separated
@@ -307,7 +355,9 @@ def parse_proj4_config_line(grid_name, parts):
         log.error("Lat/Lon grid '%s' must have its origin in degrees", grid_name)
         raise ValueError("Lat/Lon grid '%s' must have its origin in degrees" % (grid_name,))
 
+    proj4_dict = get_proj4_info(proj4_str)
 
+    info.update(**proj4_dict)
     info["grid_kind"]         = GRID_KIND_PROJ4
     info["static"]            = static
     info["proj4_str"]         = proj4_str
