@@ -9,6 +9,7 @@ SHELLB3_DEFAULT="ftp://ftp.ssec.wisc.edu/pub/shellb3/ShellB3-Linux-x86_64-201402
 BASE_REPOS_DIR="$( cd -P "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PY_DIR="$BASE_REPOS_DIR"/py
 VCREFL_DIR="$BASE_REPOS_DIR"/viirs_crefl
+MCREFL_DIR="$BASE_REPOS_DIR"/modis_crefl
 MS2GT_DIR="$BASE_REPOS_DIR"/ms2gt/src/fornav
 DEBUG=true
 
@@ -152,7 +153,7 @@ INSTALL_DIR="$DEV_DIR/python" make all_dev || oops "Couldn't install python pack
 
 # Checking that python packages were installed
 echo "Running simple import test to make sure packages can be imported"
-python -c "from polar2grid import viirs2awips" || oops "Couldn't import python package"
+python -c "from polar2grid import glue" || oops "Couldn't import python package"
 echo "Simple import test passed"
 
 # Compile VIIRS CREFL code
@@ -183,7 +184,7 @@ fi
 
 if ${BUILD_MODIS_CREFL}; then
     echo "Building MODIS CREFL"
-    cd "$VCREFL_DIR"
+    cd "$MCREFL_DIR"
 
     if [ -z "$LDFLAGS" ] && ${USE_SHELLB3}; then
         echo "Will use libaries from ShellB3 for linking MODIS CREFL"

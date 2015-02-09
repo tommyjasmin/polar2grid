@@ -12,9 +12,19 @@ EXIT_NO_DATA=1
 EXIT_SUCCESS=0
 
 export PYTHONPATH=/data1/users/davidh/event2grid_env/python:$PYTHONPATH
+<<<<<<< HEAD
 DIBS_VIIRS=/data1/users/davidh/event2grid_env/polar2grid/py/util/dibs_viirs.py
 CREFL_RUN=/data1/users/davidh/event2grid_env/viirs_crefl/run_viirs_crefl.bash
 CREFL2GTIFF=/data1/users/davidh/event2grid_env/bin/crefl2gtiff.sh
+=======
+# Add CREFL and other binaries to the path for execution
+export PATH=/data1/users/davidh/event2grid_env/bin:$PATH
+DIBS_VIIRS=/data1/users/davidh/event2grid_env/polar2grid/py/util/dibs_viirs.py
+CREFL_RUN=/data1/users/davidh/event2grid_env/viirs_crefl/run_viirs_crefl.bash
+PYTHON_EXEC=/data1/users/davidh/event2grid_env/ShellB3/bin/python
+CREFL2GTIFF="$PYTHON_EXEC -m polar2grid.glue crefl gtiff true_color"
+VIIRS2GTIFF="$PYTHON_EXEC -m polar2grid.glue viirs gtiff"
+>>>>>>> origin/event2grid
 FTP_BASE_PATH=/pub/ssec/davidh/event2grid
 
 # This event's download directory
@@ -52,6 +62,7 @@ for pass_dir in `ls -d $EVENT_DL_DIR/*.pass`; do
     mkdir -p $work_dir
     cd $work_dir
     
+<<<<<<< HEAD
     # Process the CREFL files
     # FIXME: This will need to be determined by whether or not CREFL is desired (maybe rewrite it in python to polar2grid wink,wink)
     echo "Creating CREFL output..."
@@ -90,6 +101,21 @@ for pass_dir in `ls -d $EVENT_DL_DIR/*.pass`; do
         # FTP to a location
         echo "Pushing $gtiff_file to FTP server ($ftp_data_path)"
         ncftpput -m -u ftp -p david.hoese@ssec.wisc.edu ftp.ssec.wisc.edu $ftp_data_path $gtiff_file
+=======
+    # Remap using polar2grid (working dir has the crefl files)
+    echo "Running crefl2gtiff..."
+    $CREFL2GTIFF -vvv $P2G_FLAGS -f $data_dir
+    echo "Running viirs2gtiff..."
+    $VIIRS2GTIFF -vvv $P2G_FLAGS -f $data_dir
+
+    # FIXME: This only sends true colors
+    for gtiff_file in $work_dir/*.tif; do
+        if [ -f $gtiff_file ]; then
+            # FTP to a location
+            echo "Pushing $gtiff_file to FTP server ($ftp_data_path)"
+            ncftpput -m -u ftp -p david.hoese@ssec.wisc.edu ftp.ssec.wisc.edu $ftp_data_path $gtiff_file
+        fi
+>>>>>>> origin/event2grid
     done
 done
 
