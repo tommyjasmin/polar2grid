@@ -14,11 +14,7 @@ EVENT_SCRIPT_KEY = "{start}_{end}_{creation}_{user}"
 EVENT_SCRIPT_DIR = "/home/davidh/event2grid_jobs"
 EVENT2GRID_SCRIPT = "/data/users/davidh/event2grid_env/polar2grid/py/util/event2grid.sh"
 EVENT2GRID_SCRIPT_TEXT = """#!/usr/bin/env bash
-<<<<<<< HEAD
-LOCK_FN=$EVENT_SCRIPT_DIR/{event_key}.lock
-=======
 LOCK_FN={event_script_dir}/{event_key}.lock
->>>>>>> origin/event2grid
 flock -n $LOCK_FN -c "{event2grid_script} {event_key} {dl_dir} {work_dir} \\"{dibs_flags}\\" \\"{p2g_flags}\\""
 if [ $? -ne 0 ]; then
     echo "Script {event_key} is locked by $LOCK_FN. Will not run." 1>&2
@@ -52,11 +48,7 @@ def get_script_text(event_key, **kwargs):
         dibs_flags_str += " " + file_types
     p2g_flags_str = " ".join(["--%s %s" % (k.replace('_', '-'), str(kwargs.get(k, None))) for k in p2g_flags if k in kwargs])
 
-<<<<<<< HEAD
-    return EVENT2GRID_SCRIPT_TEXT.format(event2grid_script=EVENT2GRID_SCRIPT, event_key=event_key, dl_dir=DATA_DL_DIR, work_dir=P2G_WORK_DIR, dibs_flags=dibs_flags_str, p2g_flags=p2g_flags_str)
-=======
     return EVENT2GRID_SCRIPT_TEXT.format(event_script_dir=EVENT_SCRIPT_DIR, event2grid_script=EVENT2GRID_SCRIPT, event_key=event_key, dl_dir=DATA_DL_DIR, work_dir=P2G_WORK_DIR, dibs_flags=dibs_flags_str, p2g_flags=p2g_flags_str)
->>>>>>> origin/event2grid
 
 
 def main():

@@ -19,6 +19,7 @@ from subprocess import call
 from collections import defaultdict
 from glob import glob
 from datetime import date, timedelta, datetime
+import ftplib
 
 LOG = logging.getLogger(__name__)
 
@@ -36,7 +37,8 @@ FLO_HOSTNAME = "peate.ssec.wisc.edu"
 # if we are in the building, use this instead for faster download
 FLO_INSIDE_HOSTNAME = "peate02.ssec.wisc.edu"
 
-RE_NPP = re.compile('(?P<kind>[A-Z]+)(?P<band>[0-9]*)_(?P<sat>[A-Za-z0-9]+)_d(?P<date>\d+)_t(?P<start_time>\d+)_e(?P<end_time>\d+)_b(?P<orbit>\d+)_c(?P<created_time>\d+)_(?P<site>[a-zA-Z0-9]+)_(?P<domain>[a-zA-Z0-9]+)\.h5')
+re_npp_pattern = r'(?P<kind>[A-Z\-]+)(?P<band>[0-9]*)_(?P<sat>[A-Za-z0-9]+)_d(?P<date>\d+)_t(?P<start_time>\d+)_e(?P<end_time>\d+)_b(?P<orbit>\d+)_c(?P<created_time>\d+)_(?P<site>[a-zA-Z0-9]+)_(?P<domain>[a-zA-Z0-9]+)\.h5'
+RE_NPP = re.compile(re_npp_pattern)
 
 
 FLO_FMT = re.sub(r'\n\s+', '', FLO_FMT)
@@ -68,6 +70,31 @@ def flo_find(lat, lon, radius, start, end, file_types, use_inside_hostname=True)
         LOG.debug('found %s @ %s' % (match.group(0), url))
         yield match, url
     wp.close()
+
+
+FLO_RVIRS_RE = re.compile(r'ftp://(?P<host>[^/]+)/ingest/(?P<inst_url>[^/]+)/(?P<sat_url>[^/]+)/(?P<year>\d{4})/(?P<jul_day>\d{3})/(?P<ftype>[^/]+)/' + re_npp_pattern)
+
+
+def ll_find(lat, lon, radius, start, end, file_types, use_inside_hostname=True, flo_product="RVIRS"):
+    """Create a file list for low latency products (separate FTP from flo search) by searching
+    flo for `flo_product` and replacing parts of the URL to create FTP URLs for each file type.
+    """
+    # Example Original URL:
+    # ftp://sips.ssec.wisc.edu/ingest/viirs/npp/2015/037/RVIRS/RNSCA-RVIRS_npp_d20150206_t0144453_e0146107_b16978_c20150206034121195445_noaa_ops.h5
+    # Example New URL (different day):
+    # ftp://sips.ssec.wisc.edu/viirs/npp/cspp_2_0/2015/011/SVI03/SVI03_npp_d20150111_t0000438_e0002080_b16608_c20150111022206530669_ssec_dev.h5
+    orig_inventory = flo_find(lat, lon, radius, start, end, [flo_product], use_inside_hostname=use_inside_hostname)
+    for orig_nfo, orig_url in orig_inventory:
+        new_nfo = FLO_RVIRS_RE.match(orig_url)
+        if not new_nfo:
+            LOG.error("URL for file does not match expected regular expression")
+            continue
+
+        for ft in file_types:
+            # needs wildcard to be processed by lftp
+            new_url = "ftp://{host}/{inst_url}/{sat_url}/cspp_2_0/{year}/{jul_day}/{file_type}/{file_type}_{sat}_d{date}_t{start_time}_e{end_time}_b{orbit}_c*_ssec_dev.h5".format(file_type=ft, **new_nfo)
+            yield new_nfo, new_url
+
 
 def _test_flo_find(args, use_inside_hostname=True):
     start = date(2011, 12, 13)
@@ -110,12 +137,18 @@ def curl(filename, url):
     return call(['curl', '-s', '-o', filename, url])
 
 
+def get_ftp(filename, url):
+    # Note: ignores filename
+    # Could use ftplib, but this is simpler
+    return call(['lftp', '-c', 'mget', url])
+
+
 def _key(nfo):
     nfo = nfo.groupdict()
     return (nfo['date'], nfo['start_time'], nfo['end_time'])
 
 
-def sync(lat, lon, radius, start=None, end=None, file_types=None, use_inside_hostname=True):
+def sync(lat, lon, radius, start=None, end=None, file_types=None, use_inside_hostname=True, low_latency=False):
     "synchronize current working directory to include all the files available"
     if end is None:
         end = date.today() + ONE_DAY
@@ -125,15 +158,22 @@ def sync(lat, lon, radius, start=None, end=None, file_types=None, use_inside_hos
     bad = list()
     good = list()
     new_files = defaultdict(list)
-    inventory = list(flo_find(lat, lon, radius, start, end, file_types, use_inside_hostname=use_inside_hostname))
+    if low_latency:
+        inventory = list(ll_find(lat, lon, radius, start, end, file_types, use_inside_hostname=use_inside_hostname))
+    else:
+        inventory = list(flo_find(lat, lon, radius, start, end, file_types, use_inside_hostname=use_inside_hostname))
     for n, (nfo, url) in enumerate(inventory):
-        filename = nfo.group(0)
+        filename = os.path.basename(url)
         LOG.debug('checking %s @ %s' % (filename, url))
         if os.path.isfile(filename):
             LOG.debug('%s is already present' % filename)
         else:
             LOG.info('downloading %d/%d : %s' % (n+1, len(inventory), url))
-            rc = curl(filename, url)
+            if low_latency:
+                rc = get_ftp(filename, url)
+            else:
+                rc = curl(filename, url)
+
             if rc!=0:
                 bad.append(nfo)
                 LOG.warning('download of %s failed' % url)
@@ -152,7 +192,8 @@ def sync(lat, lon, radius, start=None, end=None, file_types=None, use_inside_hos
     return fully_intact_sets
 
 
-def mainsync(name, lat, lon, radius, start=None, end=None, file_types=None, use_inside_hostname=True):
+def mainsync(name, lat, lon, radius, start=None, end=None, file_types=None, use_inside_hostname=True,
+             low_latency=False):
     "write a .nfo file with 'date start_time end_time when we complete a transfer"
     lat = int(lat)
     lon = int(lon)
@@ -163,7 +204,7 @@ def mainsync(name, lat, lon, radius, start=None, end=None, file_types=None, use_
         end = datetime.strptime(end, '%Y-%m-%d').date()
 
     fp = file(name+'.nfo', 'at')
-    for key in sync(lat, lon, radius, start, end, file_types, use_inside_hostname=use_inside_hostname).keys():
+    for key in sync(lat, lon, radius, start, end, file_types, use_inside_hostname=use_inside_hostname, low_latency=low_latency).keys():
         LOG.info('%s is ready' % repr(key))
         print >>fp, '%s %s %s' % key
         fp.flush()
@@ -293,6 +334,8 @@ example:
     parser.add_option('-p', '--pass', dest='passes', help='post-process .nfo file (consuming it) and create .pass directories', default=False, action="store_true")
     parser.add_option('--outside-host', dest='use_inside_hostname', action='store_false', default=True,
                       help='Download data from %s instead of %s' % (FLO_HOSTNAME, FLO_INSIDE_HOSTNAME))
+    parser.add_option('--low-latency', dest='low_latency', action='store_true', default=False,
+                      help='Download data from the SIPS low-latency FTP location')
     # parser.add_option('-o', '--output', dest='output',
     #                 help='location to store output')
     # parser.add_option('-I', '--include-path', dest="includes",
@@ -321,7 +364,8 @@ example:
 
     if options.radius:
         mainsync(args[0], options.lat, options.lon, options.radius, options.start, options.end,
-                 args[1:] or PRODUCT_LIST, use_inside_hostname=options.use_inside_hostname)
+                 args[1:] or PRODUCT_LIST, use_inside_hostname=options.use_inside_hostname,
+                 low_latency=options.low_latency)
 
     if options.passes:
         mainpass(args[0]+'.nfo')
