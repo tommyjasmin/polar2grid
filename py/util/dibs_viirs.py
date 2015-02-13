@@ -92,7 +92,7 @@ def ll_find(lat, lon, radius, start, end, file_types, use_inside_hostname=True, 
 
         for ft in file_types:
             # needs wildcard to be processed by lftp
-            new_url = "ftp://{host}/{inst_url}/{sat_url}/cspp_2_0/{year}/{jul_day}/{file_type}/{file_type}_{sat}_d{date}_t{start_time}_e{end_time}_b{orbit}_c*_ssec_dev.h5".format(file_type=ft, **new_nfo)
+            new_url = "ftp://{host}/{inst_url}/{sat_url}/cspp_2_0/{year}/{jul_day}/{file_type}/{file_type}_{sat}_d{date}_t{start_time}_e{end_time}_b{orbit}_c*_ssec_dev.h5".format(file_type=ft, **new_nfo.groupdict())
             yield new_nfo, new_url
 
 
