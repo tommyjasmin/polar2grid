@@ -63,7 +63,7 @@ def main():
     parser.add_argument('-r', '--radius', dest='radius', help='radius in km', type=int, default=0)
     parser.add_argument('-s', '--start', dest='start', help='yyyy-mm-dd start dateoptional', default=None)
     parser.add_argument('-e', '--end', dest='end', help='yyyy-mm-dd end date optional', default=None)
-    parser.add_argument('--file-types', dest='file_types', choices=ALL_VIIRS_PRODUCT_LIST,
+    parser.add_argument('--file-types', dest='file_types', choices=ALL_VIIRS_PRODUCT_LIST, nargs="+",
             default=CREFL_VIIRS_PRODUCT_LIST, help="file types to download from PEATE")
     parser.add_argument('-g', '--grids', dest="grids", default=["wgs84_fit"], nargs="*",
             help="polar2grid grid to remap the data to")
