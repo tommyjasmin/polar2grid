@@ -95,9 +95,11 @@ PRODUCT_M_LZA = "m_lunar_zenith_angle"
 PRODUCT_I_SZA = "i_solar_zenith_angle"
 PRODUCT_I_LZA = "i_lunar_zenith_angle"
 PRODUCT_IFOG = "ifog"
+PRODUCT_CM = "cloudmask"
 PRODUCT_HISTOGRAM_DNB = "histogram_dnb"
 PRODUCT_ADAPTIVE_DNB = "adaptive_dnb"
 PRODUCT_DYNAMIC_DNB = "dynamic_dnb"
+PRODUCT_NIGHTLIGHTS_DNB = "nightlights_dnb"
 #   adaptive IR
 PRODUCT_ADAPTIVE_I04 = "adaptive_i04"
 PRODUCT_ADAPTIVE_I05 = "adaptive_i05"
@@ -169,13 +171,14 @@ PRODUCTS.add_product(PRODUCT_M13, PAIR_MNAV, "brightness_temperature", guidebook
 PRODUCTS.add_product(PRODUCT_M14, PAIR_MNAV, "brightness_temperature", guidebook.FILE_TYPE_M14, guidebook.K_BTEMP)
 PRODUCTS.add_product(PRODUCT_M15, PAIR_MNAV, "brightness_temperature", guidebook.FILE_TYPE_M15, guidebook.K_BTEMP)
 PRODUCTS.add_product(PRODUCT_M16, PAIR_MNAV, "brightness_temperature", guidebook.FILE_TYPE_M16, guidebook.K_BTEMP)
+PRODUCTS.add_product(PRODUCT_CM, PAIR_MNAV, "qf1_viirscmip", guidebook.FILE_TYPE_IICMO, guidebook.K_CLOUDMASKQF)
 PRODUCTS.add_product(PRODUCT_DNB, PAIR_DNBNAV, "radiance", guidebook.FILE_TYPE_DNB, guidebook.K_RADIANCE)
 # PRODUCTS.add_raw_product(PRODUCT_SST, PAIR_MNAV, "btemp", guidebook.FILE_TYPE_SST, guidebook.K_BTEMP, (None,))
 
-PRODUCTS.add_product(PRODUCT_IFOG, PAIR_INAV, "temperature_difference", dependencies=(PRODUCT_I05, PRODUCT_I04, PRODUCT_I_SZA))
 PRODUCTS.add_product(PRODUCT_HISTOGRAM_DNB, PAIR_DNBNAV, "equalized_radiance", dependencies=(PRODUCT_DNB, PRODUCT_DNB_SZA))
 PRODUCTS.add_product(PRODUCT_ADAPTIVE_DNB, PAIR_DNBNAV, "equalized_radiance", dependencies=(PRODUCT_DNB, PRODUCT_DNB_SZA, PRODUCT_DNB_LZA))
 PRODUCTS.add_product(PRODUCT_DYNAMIC_DNB, PAIR_DNBNAV, "equalized_radiance", dependencies=(PRODUCT_DNB, PRODUCT_DNB_SZA, PRODUCT_DNB_LZA))
+PRODUCTS.add_product(PRODUCT_NIGHTLIGHTS_DNB, PAIR_DNBNAV, "equalized_radiance", dependencies=(PRODUCT_DNB, PRODUCT_DNB_SZA, PRODUCT_DNB_LZA))
 PRODUCTS.add_product(PRODUCT_ADAPTIVE_I04, PAIR_INAV, "equalized_brightness_temperature", dependencies=(PRODUCT_I04,))
 PRODUCTS.add_product(PRODUCT_ADAPTIVE_I05, PAIR_INAV, "equalized_brightness_temperature", dependencies=(PRODUCT_I05,))
 PRODUCTS.add_product(PRODUCT_ADAPTIVE_M12, PAIR_MNAV, "equalized_brightness_temperature", dependencies=(PRODUCT_M12,))
@@ -223,6 +226,7 @@ class Frontend(roles.FrontendRole):
             PRODUCT_ADAPTIVE_M15: self.create_adaptive_btemp,
             PRODUCT_ADAPTIVE_M16: self.create_adaptive_btemp,
             PRODUCT_DYNAMIC_DNB: self.create_dynamic_dnb,
+            PRODUCT_NIGHTLIGHTS_DNB: self.create_nightlights_dnb,
         }
         for p, p_def in PRODUCTS.items():
             if p_def.data_kind == "reflectance" and p_def.dependencies:
@@ -315,6 +319,7 @@ class Frontend(roles.FrontendRole):
             PRODUCT_M15,
             PRODUCT_M16,
             PRODUCT_IFOG,
+            PRODUCT_CM,
             PRODUCT_HISTOGRAM_DNB,
             PRODUCT_ADAPTIVE_DNB,
             PRODUCT_DYNAMIC_DNB,
@@ -325,10 +330,22 @@ class Frontend(roles.FrontendRole):
         product_def = PRODUCTS[lon_product["product_name"]]
         index = 0 if self.use_terrain_corrected else 1
         file_type = product_def.get_file_type(index=index)
-        lon_file_reader = self.file_readers[file_type]
+        try:
+            lon_file_reader = self.file_readers[file_type]
+        except KeyError:
+  	    index = 0
+            file_type = product_def.get_file_type(index=index)
+            lon_file_reader = self.file_readers[file_type]
+
         product_def = PRODUCTS[lat_product["product_name"]]
+        index = 0 if self.use_terrain_corrected else 1
         file_type = product_def.get_file_type(index=index)
-        lat_file_reader = self.file_readers[file_type]
+        try:
+            lat_file_reader = self.file_readers[file_type]
+        except KeyError:
+  	    index = 0
+            file_type = product_def.get_file_type(index=index)
+            lat_file_reader = self.file_readers[file_type]
 
         # sanity check
         for k in ["data_type", "swath_rows", "swath_columns", "rows_per_scan", "fill_value"]:
@@ -366,6 +383,14 @@ class Frontend(roles.FrontendRole):
         index = 0 if self.use_terrain_corrected else 1
         file_type = product_def.get_file_type(index=index)
         file_key = product_def.get_file_key(index=index)
+
+	# if we failed, try terrain-corrected
+        if file_type not in self.file_readers:
+            LOG.error("TJJ 2nd try to get nav, TC")
+	    index = 0
+            file_type = product_def.get_file_type(index=index)
+            file_key = product_def.get_file_key(index=index)
+
         if file_type not in self.file_readers:
             LOG.error("Could not create product '%s' because some data files are missing" % (product_name,))
             raise RuntimeError("Could not create product '%s' because some data files are missing" % (product_name,))
@@ -383,7 +408,9 @@ class Frontend(roles.FrontendRole):
 
         try:
             # TODO: Do something with data type
+            LOG.info("TJJ file_key: '%s', filename: '%s'", file_key, filename)
             shape = file_reader.write_var_to_flat_binary(file_key, filename)
+            LOG.info("TJJ after write_var_to_flat_binary...") 
             rows_per_scan = GEO_PAIRS[product_def.geo_pair_name].rows_per_scan
         except StandardError:
             LOG.error("Could not extract data from file. Use '--no-tc' flag if terrain-corrected data is not available")
@@ -537,6 +564,8 @@ class Frontend(roles.FrontendRole):
         dnb_product_name = deps[0]
         sza_product_name = deps[1]
         dnb_product = products_created[dnb_product_name]
+
+        # TJJ - clip swath edges here?
         dnb_data = dnb_product.get_data_array("swath_data")
         sza_data = products_created[sza_product_name].get_data_array()
         filename = product_name + ".dat"
@@ -549,7 +578,14 @@ class Frontend(roles.FrontendRole):
 
         try:
             output_data = dnb_product.copy_array(filename=filename, read_only=False)
+            output_shape = output_data.shape
+            LOG.warning("TJJ Shape of DNB HISTOGRAM array: %r ", output_shape)
+
             dnb_scale(dnb_data, solarZenithAngle=sza_data, fillValue=fill, out=output_data)
+
+            # TJJ clip swath edges, 1/8 on either side zeroed out
+            output_data[0:768,0:507] = 0
+            output_data[0:768,3356:] = 0
 
             one_swath = self.create_secondary_swath_object(product_name, swath_definition, filename,
                                                            dnb_product["data_type"], products_created)
@@ -577,6 +613,7 @@ class Frontend(roles.FrontendRole):
         moon_illum_fraction = sum(geo_file_reader[guidebook.K_MOONILLUM]) / (100.0 * len(geo_file_reader))
         dnb_product = products_created[dnb_product_name]
         dnb_data = dnb_product.get_data_array()
+
         sza_data = products_created[sza_product_name].get_data_array()
         lza_data = products_created[lza_product_name].get_data_array()
         filename = product_name + ".dat"
@@ -589,8 +626,15 @@ class Frontend(roles.FrontendRole):
 
         try:
             output_data = dnb_product.copy_array(filename=filename, read_only=False)
+            dnb_shape = output_data.shape
+            LOG.warning("TJJ Shape of DNB ADAPTIVE data array: %r ", dnb_shape)
+
             adaptive_dnb_scale(dnb_data, solarZenithAngle=sza_data, lunarZenithAngle=lza_data,
                                moonIllumFraction=moon_illum_fraction, fillValue=fill, out=output_data)
+
+            # TJJ clip swath edges, 1/8 on either side zeroed out
+            # output_data[0:768,0:507] = 0
+            # output_data[0:768,3356:] = 0
 
             one_swath = self.create_secondary_swath_object(product_name, swath_definition, filename,
                                                            dnb_product["data_type"], products_created)
@@ -730,6 +774,104 @@ class Frontend(roles.FrontendRole):
             max_val = numpy.power(10, -1.7 - (2.65 + moon_factor1 + moon_factor2) * erf_portion)
             min_val = numpy.power(10, -4.0 - (2.95 + moon_factor2) * erf_portion)
             numpy.sqrt((dnb_data - min_val) / (max_val - min_val), out=output_data)
+
+            # TJJ clip swath edges, 1/16 on either side zeroed out
+            output_data[0:768,0:253] = 0
+            output_data[0:768,3610:] = 0
+
+            one_swath = self.create_secondary_swath_object(product_name, swath_definition, filename,
+                                                           dnb_product["data_type"], products_created)
+        except StandardError:
+            if os.path.isfile(filename):
+                os.remove(filename)
+            raise
+
+        return one_swath
+
+    def create_nightlights_dnb(self, product_name, swath_definition, products_created, fill=numpy.nan):
+        LOG.debug("")
+        LOG.debug("TJJ create_nightlights_dnb() in...")
+        product_def = PRODUCTS[product_name]
+        deps = product_def.dependencies
+        if len(deps) != 3:
+            LOG.error("Expected 3 dependencies to create dynamic DNB product, got %d" % (len(deps),))
+            raise RuntimeError("Expected 3 dependencies to create dynamic DNB product, got %d" % (len(deps),))
+
+        dnb_product_name = deps[0]
+        sza_product_name = deps[1]
+        lza_product_name = deps[2]
+        lon_product_name = GEO_PAIRS[product_def.geo_pair_name].lon_product
+        index = 0 if self.use_terrain_corrected else 1
+        file_type = PRODUCTS[lon_product_name].get_file_type(index=index)
+        geo_file_reader = self.file_readers[file_type]
+
+        # convert to decimal instead of %
+        # XXX: Operate on each fraction separately?
+        moon_illum_fraction = sum(geo_file_reader[guidebook.K_MOONILLUM]) / (100.0 * len(geo_file_reader))
+        LOG.debug("TJJ Moon Illum Fraction: %f", moon_illum_fraction)
+
+        if (moon_illum_fraction > 0.3):
+           LOG.info("Moon illumination is > 30%, will not create '%s' product", product_name)
+           return None
+
+        dnb_product = products_created[dnb_product_name]
+        dnb_data = dnb_product.get_data_array()
+        sza_data = products_created[sza_product_name].get_data_array()
+        lza_data = products_created[lza_product_name].get_data_array()
+        filename = product_name + ".dat"
+
+        night_mask = sza_data >= 100
+        night_percentage = (numpy.count_nonzero(night_mask) / sza_data.size) * 100.0
+        LOG.debug("TJJ NL scene has %f%% night data", night_percentage)
+
+        if os.path.isfile(filename):
+            if not self.overwrite_existing:
+                LOG.error("Binary file already exists: %s" % (filename,))
+                raise RuntimeError("Binary file already exists: %s" % (filename,))
+            else:
+                LOG.warning("Binary file already exists, will overwrite: %s", filename)
+
+        try:
+            output_data = dnb_product.copy_array(filename=filename, read_only=False)
+
+            # From Steve Miller and Curtis Seaman
+            # maxval = 10.^(-1.7 - (((2.65+moon_factor1+moon_factor2))*(1+erf((solar_zenith-95.)/(5.*sqrt(2.0))))))
+            # minval = 10.^(-4. - ((2.95+moon_factor2)*(1+erf((solar_zenith-95.)/(5.*sqrt(2.0))))))
+            # scaled_radiance = (radiance - minval) / (maxval - minval)
+            # radiance = sqrt(scaled_radiance)
+
+            moon_factor1 = 0.7 * (1.0 - moon_illum_fraction)
+            moon_factor2 = 0.0022 * lza_data
+            erf_portion = 1 + erf((sza_data - 95.0) / (5.0 * numpy.sqrt(2.0)))
+            max_val = numpy.power(10, -1.7 - (2.65 + moon_factor1 + moon_factor2) * erf_portion)
+            min_val = numpy.power(10, -4.0 - (2.95 + moon_factor2) * erf_portion)
+            numpy.sqrt((dnb_data - min_val) / (max_val - min_val), out=output_data)
+
+            # saturated_pixels = where(radiance gt maxval, nsatpx)
+            # saturation_pct = float(nsatpx)/float(n_elements(radiance))
+    
+            # while saturation_pct gt 0.005 do begin
+            #    maxval = maxval*1.1
+            #    saturated_pixels = where(radiance gt maxval, nsatpx)
+            #    saturation_pct = float(nsatpx)/float(n_elements(radiance))
+            # endwhile
+
+            # histogram.local_histogram_equalization(bt_data, ~bt_mask, do_log_scale=True, out=output_data)
+
+            # TJJ clip swath edges, 1/16 on either side zeroed out
+            output_data[0:768,0:253] = 0
+            output_data[0:768,3610:] = 0
+
+            # TJJ always apply night mask, avoid terminator issues
+            output_data[~night_mask] = 0;
+
+            # acc to William, only use data if MI < 10% OR...
+            # 10% < MI < 30% AND LZA > 90
+            # To accomodate this we will need a moon mask
+            if ((moon_illum_fraction > 0.1) and (moon_illum_fraction < 0.3)):
+               LOG.info("Moon illumination between 10% and 30%, masking where LZA > 90")
+               moon_mask = lza_data > 90
+               output_data[~moon_mask] = 0;
 
             one_swath = self.create_secondary_swath_object(product_name, swath_definition, filename,
                                                            dnb_product["data_type"], products_created)

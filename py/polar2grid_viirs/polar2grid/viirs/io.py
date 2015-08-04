@@ -131,6 +131,7 @@ class VIIRSSDRReader(BaseFileReader):
 
         # begin time
         sd = self[guidebook.K_AGGR_STARTDATE][0][0]
+        LOG.info("READING START DATE...")
         st = self[guidebook.K_AGGR_STARTTIME][0][0]
         self.begin_time = time_attr_to_datetime(sd, st)
 
@@ -138,6 +139,39 @@ class VIIRSSDRReader(BaseFileReader):
         ed = self[guidebook.K_AGGR_ENDDATE][0][0]
         et = self[guidebook.K_AGGR_ENDTIME][0][0]
         self.end_time = time_attr_to_datetime(ed, et)
+
+        # G-Ring lon
+        # TJJ Dateline test - mix of neg and pos lons
+        # try:
+        #     num_lons = len(self[guidebook.K_LON_G_RING])
+        #     neg_lons = False
+        #     pos_lons = False
+        #     for i in range(num_lons):
+        #         LOG.info("GRINGLON: %d", self[guidebook.K_LON_G_RING][i][0])
+        #         tmp_lon = self[guidebook.K_LON_G_RING][i][0]
+        #         if (tmp_lon > 100):
+        #             pos_lons = True
+        #         if (tmp_lon < 100):
+        #             neg_lons = True
+        #     if (neg_lons and pos_lons):
+        #         LOG.error("CROSSES DATELINE! Skipping...")
+        #         sys.exit(1)
+        # except KeyError:
+        #     LOG.debug("Not a GEO file, no G-Ring test needed, error is ok...")
+
+        # lat min, max
+        lat_min = self[guidebook.K_LAT_MIN][0][0]
+        lat_max = self[guidebook.K_LAT_MAX][0][0]
+        LOG.info("READING LAT MIN: %d", lat_min)
+        LOG.info("READING LAT MAX: %d", lat_max)
+
+        # TJJ - throw out granules above and below lat +/- 65
+        if (int(lat_max) > 65):
+            LOG.error("Granule out of Latitude upper bounds, skipping...")
+            sys.exit(1)
+        if (int(lat_min) < -65):
+            LOG.error("Granule out of Latitude lower bounds, skipping...")
+            sys.exit(1)
 
     def __getitem__(self, item):
         known_item = self.file_type_info.get(item, item)
@@ -167,18 +201,32 @@ class VIIRSSDRReader(BaseFileReader):
         scaling_mask = scaling_mask.astype(numpy.bool)
         return data, scaling_mask
 
+    # TJJ - muck with quality flags here?
+    # XXX might hack it up...
+
     def get_swath_data(self, item, dtype=numpy.float32, fill=numpy.nan):
         """Retrieve the item asked for then set it to the specified data type, scale it, and mask it.
         """
+        LOG.debug("TJJ Getting swath data for item: %s", item)
         var_info = self.file_type_info.get(item)
+        LOG.debug("TJJ var_info.var_path %s", var_info.var_path)
+
+        bit_mask = None
+        if (item == 'qf1_viirscmip'):
+            LOG.error("TJJ EXTRACTING CM FROM QF1...")
+            dtype = numpy.uint8
+            fill = 0
+
         data = self[var_info.var_path].value.astype(dtype)
+        if (item == 'qf1_viirscmip'):
+            data = (data & 0x0C)
 
         # Get the scaling factors
         scaling_factors = None
         try:
             scaling_factors = list(self[var_info.scaling_path][:])
         except KeyError:
-            LOG.debug("No scaling factors for %s", item)
+            LOG.debug("TJJ No scaling factors for %s", item)
 
         # Get the mask for the data (based on unscaled data)
         mask = None

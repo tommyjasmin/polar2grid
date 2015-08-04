@@ -56,6 +56,9 @@ LOG = logging.getLogger(__name__)
 DEFAULT_HIGH_ANGLE = 100
 DEFAULT_LOW_ANGLE  = 88
 
+# TJJ - Test values below to work with a specific granule
+# DEFAULT_HIGH_ANGLE = 120
+# DEFAULT_LOW_ANGLE  = 110 
 
 def mask_helper(arr, fill_value):
     if numpy.isnan(fill_value):
@@ -64,7 +67,7 @@ def mask_helper(arr, fill_value):
         return arr == fill_value
 
 
-def _make_day_night_masks(image, solarZenithAngle, fillValue,
+def _make_day_night_masks(image, solarZenithAngle, lunarZenithAngle, fillValue,
                            highAngleCutoff=DEFAULT_HIGH_ANGLE, lowAngleCutoff=DEFAULT_LOW_ANGLE, stepsDegrees=None) :
     """
     given informaiton on the solarZenithAngle for each point,
@@ -87,6 +90,11 @@ def _make_day_night_masks(image, solarZenithAngle, fillValue,
     stepsDegrees = highAngleCutoff - lowAngleCutoff if stepsDegrees is None else stepsDegrees
     
     good_mask  = ~(mask_helper(image, fillValue) | mask_helper(solarZenithAngle, fillValue))
+    # TJJ - Test, try 85 first
+    moon_mask = (lunarZenithAngle > 85) & good_mask
+    # TJJ - 85 seems to mask out some key data, e.g. Nile Delta in
+    # 1st granule of 01 Apr 2015
+    # moon_mask = (lunarZenithAngle > 50) & good_mask
     night_mask = (solarZenithAngle > highAngleCutoff) & good_mask
     day_mask   = (solarZenithAngle <= lowAngleCutoff) & good_mask
     mixed_mask = [ ]
@@ -103,7 +111,7 @@ def _make_day_night_masks(image, solarZenithAngle, fillValue,
             mixed_mask.append(tmp)
         del tmp
     
-    return day_mask, mixed_mask, night_mask, good_mask
+    return day_mask, mixed_mask, night_mask, good_mask, moon_mask
 
 
 def _calculate_average_moon_illumination (moonIlluminatonFraction,
@@ -178,9 +186,9 @@ def adaptive_dnb_scale(img, fillValue=-999.0, solarZenithAngle=None, lunarZenith
         out = numpy.zeros_like(img)
 
     # build the day and night area masks
-    LOG.debug("Generating day, night, and mixed region masks...")
-    day_mask, mixed_mask, night_mask, good_mask = \
-        _make_day_night_masks(img, solarZenithAngle,
+    LOG.debug("TJJ Generating day, night, and mixed region masks...")
+    day_mask, mixed_mask, night_mask, good_mask, moon_mask = \
+        _make_day_night_masks(img, solarZenithAngle, lunarZenithAngle,
                               fillValue,
                               highAngleCutoff=highAngleCutoff,
                               lowAngleCutoff=lowAngleCutoff)
@@ -225,6 +233,7 @@ def adaptive_dnb_scale(img, fillValue=-999.0, solarZenithAngle=None, lunarZenith
         #     else :
         #         local_histogram_equalization(img, tmp_night_mask, valid_data_mask=good_mask, local_radius_px=50, out=out)
 
+        # XXX TJJ - try replacing this with a straight 10E9 scaling? (and remove neg values?)
         histogram_equalization(img, night_mask, out=out)
 
     # if night_water is not None and (numpy.any(night_water)):
@@ -233,9 +242,61 @@ def adaptive_dnb_scale(img, fillValue=-999.0, solarZenithAngle=None, lunarZenith
 
     # set any data that's not in the good areas to fill
     out[~good_mask] = fillValue
+    out[~moon_mask] = fillValue
+
+    # XXX TJJ - try LZA mask here, mask < 90 to fill
+    # LOG.info("TJJ - masking by LZA...")
+    # lza_mask = numpy.logical_and(lunarZenithAngle > 85, True)
+    # out = numpy.where(lza_mask, out, fillValue)
 
     return out
 
+
+def dnb_nighttime_scale(img, fillValue=-999.0, solarZenithAngle=None,
+              highAngleCutoff=None, lowAngleCutoff=None, out=None):
+    """
+    This scaling method tries to emphasize light sources
+
+    The img data will be separated into day, night, and mixed regions using the
+    solarZenithAngle data. The highAngleCutoff and lowAngleCutoff define the
+    points between the regions. If data points do not have a corresponding
+    solarZenithAngle, they will be considered to be invalid data and set to
+    fill values.
+    """
+    if out is None:
+        out = numpy.zeros_like(img)
+
+    # build the day, moon, and night area masks
+    LOG.debug("Generating day, night, and mixed region masks...")
+    day_mask, mixed_mask, night_mask, good_mask, moon_mask = \
+                                       _make_day_night_masks(img, solarZenithAngle, lunarZenithAngle,
+                                                             fillValue,
+                                                             highAngleCutoff=highAngleCutoff,
+                                                             lowAngleCutoff=lowAngleCutoff)
+    # has_multi_times = (mixed_mask is not None) and (len(mixed_mask) > 0)
+
+    if day_mask is not None and day_mask.any():
+        LOG.debug("  scaling DNB in day mask")
+        histogram_equalization(img, day_mask, out=out)
+
+    if mixed_mask is not None and (len(mixed_mask) > 0):
+        LOG.debug("  scaling DNB in twilight mask")
+        for mask in mixed_mask:
+            histogram_equalization(img, mask, out=out)
+
+    if night_mask is not None and night_mask.any():
+        LOG.debug("  scaling DNB in night mask")
+        if weightedMoonIllumFract > 0.25 :
+            local_histogram_equalization(img, tmp_night_mask, valid_data_mask=good_mask, local_radius_px=200, do_log_scale=True, out=out)
+        elif weightedMoonIllumFract > 0.10 :
+            local_histogram_equalization(img, tmp_night_mask, valid_data_mask=good_mask, local_radius_px=100, do_log_scale=True, out=out)
+        else :
+            local_histogram_equalization(img, tmp_night_mask, valid_data_mask=good_mask, local_radius_px=50, do_log_scale=True, out=out)
+
+    # set any data that's not in the good areas to fill
+    out[~good_mask] = fillValue
+    
+    return out
 
 def dnb_scale(img, fillValue=-999.0, solarZenithAngle=None,
               highAngleCutoff=None, lowAngleCutoff=None, out=None):
@@ -252,10 +313,14 @@ def dnb_scale(img, fillValue=-999.0, solarZenithAngle=None,
     if out is None:
         out = numpy.zeros_like(img)
 
+    # XXX TJJ Scale everything by 1E9?
+    # LOG.debug("SCALING EVERYTHING BY 1E9!")
+    # out * float(1E9)
+
     # build the day and night area masks
     LOG.debug("Generating day, night, and mixed region masks...")
-    day_mask, mixed_mask, night_mask, good_mask = \
-                                       _make_day_night_masks(img, solarZenithAngle,
+    day_mask, mixed_mask, night_mask, good_mask, moon_mask = \
+                                       _make_day_night_masks(img, solarZenithAngle, lunarZenithAngle,
                                                              fillValue,
                                                              highAngleCutoff=highAngleCutoff,
                                                              lowAngleCutoff=lowAngleCutoff)

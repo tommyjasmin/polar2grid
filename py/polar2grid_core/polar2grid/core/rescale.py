@@ -124,10 +124,16 @@ def linear_flexible_scale(img, min_out, max_out, min_in=None, max_in=None, flip=
         max_in = min_in + 1.0
     LOG.debug("Input minimum: %f, Input maximum: %f" % (min_in, max_in))
 
+    # TJJ Test - sqrt of 0 to 1 output image
+    LOG.debug("TJJ - TEST SQUARE")
+    img = numpy.square(img)
+
     if flip:
+        LOG.debug("YES, FLIPPING")
         m = (min_out - max_out) / (max_in - min_in)
         b = max_out - m * min_in
     else:
+        LOG.debug("NO FLIP")
         m = (max_out - min_out) / (max_in - min_in)
         b = min_out - m * min_in
     LOG.debug("Linear parameters: m=%f, b=%f", m, b)

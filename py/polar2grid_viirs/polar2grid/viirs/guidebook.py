@@ -72,6 +72,7 @@ FILE_TYPE_GITCO = "FT_GITCO"
 FILE_TYPE_GMTCO = "FT_GMTCO"
 FILE_TYPE_GIMGO = "FT_GIMGO"
 FILE_TYPE_GMODO = "FT_GMODO"
+FILE_TYPE_IICMO = "FT_IICMO"
 
 FILE_TYPES = {
     FILE_TYPE_I01: None,
@@ -101,9 +102,11 @@ FILE_TYPES = {
     FILE_TYPE_GMTCO: None,
     FILE_TYPE_GIMGO: None,
     FILE_TYPE_GMODO: None,
+    FILE_TYPE_IICMO: None,
 }
 
 
+K_CLOUDMASKQF = "qf1_viirscmip"
 K_LATITUDE = "latitude"
 K_LONGITUDE = "longitude"
 # Special case for TC DNB:
@@ -137,6 +140,8 @@ K_WEST_COORD = "west_coordinate"
 K_EAST_COORD = "east_coordinate"
 K_NORTH_COORD = "north_coordinate"
 K_SOUTH_COORD = "south_coordinate"
+K_LAT_MAX = "latitude_max"
+K_LAT_MIN = "latitude_min"
 K_SATELLITE = "satellite_name"
 K_DATA_PATH = "data_path"
 
@@ -181,6 +186,8 @@ def create_geo_file_info(file_kind, file_band, **kwargs):
         K_EAST_COORD: '/Data_Products/VIIRS-{file_kind}-GEO{file_band}/VIIRS-{file_kind}-GEO{file_band}_Gran_0.East_Bounding_Coordinate',
         K_NORTH_COORD: '/Data_Products/VIIRS-{file_kind}-GEO{file_band}/VIIRS-{file_kind}-GEO{file_band}_Gran_0.North_Bounding_Coordinate',
         K_SOUTH_COORD: '/Data_Products/VIIRS-{file_kind}-GEO{file_band}/VIIRS-{file_kind}-GEO{file_band}_Gran_0.South_Bounding_Coordinate',
+        K_LAT_MAX: '/Data_Products/VIIRS-{file_kind}-GEO{file_band}/VIIRS-{file_kind}-GEO{file_band}_Gran_0.N_Nadir_Latitude_Max',
+        K_LAT_MIN: '/Data_Products/VIIRS-{file_kind}-GEO{file_band}/VIIRS-{file_kind}-GEO{file_band}_Gran_0.N_Nadir_Latitude_Min',
         K_SATELLITE: '.Platform_Short_Name',
         K_DATA_PATH: '/All_Data/VIIRS-{file_kind}-GEO{file_band}_All',
     }
@@ -216,6 +223,8 @@ def create_im_file_info(file_kind, file_band, **kwargs):
         K_AGGR_STARTDATE: '/Data_Products/VIIRS-{file_kind}{file_band}-SDR/VIIRS-{file_kind}{file_band}-SDR_Aggr.AggregateBeginningDate',
         K_AGGR_ENDTIME: '/Data_Products/VIIRS-{file_kind}{file_band}-SDR/VIIRS-{file_kind}{file_band}-SDR_Aggr.AggregateEndingTime',
         K_AGGR_ENDDATE: '/Data_Products/VIIRS-{file_kind}{file_band}-SDR/VIIRS-{file_kind}{file_band}-SDR_Aggr.AggregateEndingDate',
+        K_LAT_MAX: '/Data_Products/VIIRS-{file_kind}{file_band}-SDR/VIIRS-{file_kind}{file_band}-SDR_Gran_0.N_Nadir_Latitude_Max',
+        K_LAT_MIN: '/Data_Products/VIIRS-{file_kind}{file_band}-SDR/VIIRS-{file_kind}{file_band}-SDR_Gran_0.N_Nadir_Latitude_Min',
         K_SATELLITE: ".Platform_Short_Name",
         K_DATA_PATH: '/All_Data/VIIRS-{file_kind}{file_band}-SDR_All',
     }
@@ -225,6 +234,29 @@ def create_im_file_info(file_kind, file_band, **kwargs):
         d[k] = d[k].format(**kwargs)
     return d
 
+def create_ip_file_info(file_kind, file_band, **kwargs):
+    """Return a standard dictionary for an intermediate product file.
+
+    Since all of the keys are mostly the same, no need in repeating them.
+    """
+    kwargs["file_kind"] = file_kind
+    kwargs["file_band"] = file_band
+    d = {
+        K_CLOUDMASKQF: FileVar('/All_Data/VIIRS-{file_kind}_All/QF1_VIIRSCMIP', None, **kwargs),
+        K_AGGR_STARTTIME: '/Data_Products/VIIRS-{file_kind}/VIIRS-{file_kind}_Aggr.AggregateBeginningTime',
+        K_AGGR_STARTDATE: '/Data_Products/VIIRS-{file_kind}/VIIRS-{file_kind}_Aggr.AggregateBeginningDate',
+        K_AGGR_ENDTIME: '/Data_Products/VIIRS-{file_kind}/VIIRS-{file_kind}_Aggr.AggregateEndingTime',
+        K_AGGR_ENDDATE: '/Data_Products/VIIRS-{file_kind}/VIIRS-{file_kind}_Aggr.AggregateEndingDate',
+        K_LAT_MAX: '/Data_Products/VIIRS-{file_kind}/VIIRS-{file_kind}_Gran_0.N_Nadir_Latitude_Max',
+        K_LAT_MIN: '/Data_Products/VIIRS-{file_kind}/VIIRS-{file_kind}_Gran_0.N_Nadir_Latitude_Min',
+        K_SATELLITE: ".Platform_Short_Name",
+        K_DATA_PATH: '/All_Data/VIIRS-{file_kind}_All',
+    }
+    for k, v in d.items():
+        if not isinstance(v, (str, unicode)):
+            continue
+        d[k] = d[k].format(**kwargs)
+    return d
 
 def create_edr_file_info(file_kind, file_band, **kwargs):
     """Return a standard dictionary for an EDR file.
@@ -277,6 +309,7 @@ FILE_TYPES[FILE_TYPE_M14] = create_im_file_info("M", "14")
 FILE_TYPES[FILE_TYPE_M15] = create_im_file_info("M", "15")
 FILE_TYPES[FILE_TYPE_M16] = create_im_file_info("M", "16")
 FILE_TYPES[FILE_TYPE_DNB] = create_im_file_info("DNB", "")
+FILE_TYPES[FILE_TYPE_IICMO] = create_ip_file_info("CM-IP", "")
 
 DATA_PATHS = dict((v[K_DATA_PATH], k) for k, v in FILE_TYPES.items())
 

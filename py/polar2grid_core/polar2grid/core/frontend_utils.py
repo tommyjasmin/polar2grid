@@ -593,6 +593,17 @@ class BaseMultiFileReader(object):
                 for file_reader in self.file_readers:
                     single_array = file_reader.get_swath_data(item)
                     file_appender.append(single_array)
+                    # TJJ XXX Big temporary hack! 
+                    # Checking for and masking cloud mask bits here
+                    # Proof of concept only!!
+                    # if (item == 'qf1_viirscmip'):
+                    #     LOG.error("TJJ MASKING CLOUD BYTE")
+                    #     cm_mask = numpy.where(single_array < 1)
+                    #     cm_out = numpy.where(cm_mask, single_array, 0)
+                    #     file_appender.append(cm_out)
+                    # else:
+                    #     LOG.error("TJJ NOT MASKING CLOUD BYTE")
+                    #     file_appender.append(single_array)
         except StandardError:
             if os.path.isfile(filename):
                 os.remove(filename)
