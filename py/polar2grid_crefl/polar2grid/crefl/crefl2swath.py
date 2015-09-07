@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
-# Copyright (C) 2014 Space Science and Engineering Center (SSEC),
+# Copyright (C) 2012-2015 Space Science and Engineering Center (SSEC),
 #  University of Wisconsin-Madison.
 #
 #     This program is free software: you can redistribute it and/or modify
@@ -27,21 +27,106 @@
 #     1225 West Dayton Street
 #     Madison, WI  53706
 #     david.hoese@ssec.wisc.edu
-"""Read one or more contiguous in-order HDF4 VIIRS or MODIS corrected reflectance product
-granules and aggregate them into one swath per band.
-Write out Swath binary files used by other polar2grid components.
+"""The Corrected Reflectance Frontend operates on corrected reflectance files created from
+VIIRS Science Data Record (SDR) files or MODIS Level 1B (L1B) files. Currently corrected reflectance
+files are created by third part software developed by NASA.The ``CREFL_SPA`` algorithm
+for MODIS and ``CVIIRS_SPA`` algorithm for VIIRS can be found here:
+http://directreadout.sci.gsfc.nasa.gov/?id=software
 
-The crefl frontend accepts output from MODIS and VIIRS corrected reflectance processing. If provided with SDR files
+Polar2Grid uses its own patched version of the CREFL processing code for VIIRS data. This code is available in
+the main code repository and fixes a few bugs that were not fixed in the original CREFL code at the time of writing.
+After processing the output can be provided to Polar2Grid to create true color images or other RGB images.
+
+.. versionadded:: 2.0
+
+    CREFL software is automatically called when the CREFL frontend is provided SDR or L1B files.
+
+.. note::
+
+    The ``crefl2gtiff.sh`` script is hardcoded to create true color images by default since this is the most common
+    use case for the CREFL frontend. This is equivalent to ``p2g_glue crefl gtiff true_color ...`` since the products
+    needed for true color are created by default.
+
+The CREFL frontend accepts output from MODIS and VIIRS corrected reflectance processing. If provided with SDR files
 it will attempt to call the proper programs to convert the files. The required commands that must be available are:
 
  - h5SDS_transfer_rename
  - cviirs (for VIIRS corrected reflectance)
- - crefl.1.7.1 (for MODIS corrected reflectance)
+ - crefl (for MODIS corrected reflectance)
+
+The CREFL software also requires ancillary data in the form of ``tbase.hdf`` and ``CMGDEM.hdf`` files for the
+MODIS and VIIRS processing respectively. These files are provided in the CSPP software bundle and are automatically
+detected by the software. Alternate locations can be specified with the ``P2G_CMODIS_ANCPATH`` and
+``P2G_CVIIRS_ANCPATH`` environment variables.
+
+The following products are provided by this frontend:
+
+
+    +--------------------+--------------------------------------------+
+    | Product Name       | Description                                |
+    +====================+============================================+
+    | viirs_crefl01      | Corrected Reflectance from VIIRS M05 Band  |
+    +--------------------+--------------------------------------------+
+    | viirs_crefl02      | Corrected Reflectance from VIIRS M07 Band  |
+    +--------------------+--------------------------------------------+
+    | viirs_crefl03      | Corrected Reflectance from VIIRS M03 Band  |
+    +--------------------+--------------------------------------------+
+    | viirs_crefl04      | Corrected Reflectance from VIIRS M04 Band  |
+    +--------------------+--------------------------------------------+
+    | viirs_crefl05      | Corrected Reflectance from VIIRS M08 Band  |
+    +--------------------+--------------------------------------------+
+    | viirs_crefl06      | Corrected Reflectance from VIIRS M10 Band  |
+    +--------------------+--------------------------------------------+
+    | viirs_crefl07      | Corrected Reflectance from VIIRS M11 Band  |
+    +--------------------+--------------------------------------------+
+    | viirs_crefl08      | Corrected Reflectance from VIIRS I01 Band  |
+    +--------------------+--------------------------------------------+
+    | viirs_crefl09      | Corrected Reflectance from VIIRS I02 Band  |
+    +--------------------+--------------------------------------------+
+    | viirs_crefl10      | Corrected Reflectance from VIIRS I03 Band  |
+    +--------------------+--------------------------------------------+
+    | modis_crefl01_1000m| Corrected Reflectance from MODIS Band 1    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl02_1000m| Corrected Reflectance from MODIS Band 2    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl03_1000m| Corrected Reflectance from MODIS Band 3    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl04_1000m| Corrected Reflectance from MODIS Band 4    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl05_1000m| Corrected Reflectance from MODIS Band 5    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl06_1000m| Corrected Reflectance from MODIS Band 6    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl07_1000m| Corrected Reflectance from MODIS Band 7    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl01_500m | Corrected Reflectance from MODIS Band 1    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl02_500m | Corrected Reflectance from MODIS Band 2    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl03_500m | Corrected Reflectance from MODIS Band 3    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl04_500m | Corrected Reflectance from MODIS Band 4    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl05_500m | Corrected Reflectance from MODIS Band 5    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl06_500m | Corrected Reflectance from MODIS Band 6    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl07_500m | Corrected Reflectance from MODIS Band 7    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl01_250m | Corrected Reflectance from MODIS Band 1    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl02_250m | Corrected Reflectance from MODIS Band 2    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl03_250m | Corrected Reflectance from MODIS Band 3    |
+    +--------------------+--------------------------------------------+
+    | modis_crefl04_250m | Corrected Reflectance from MODIS Band 4    |
+    +--------------------+--------------------------------------------+
+
+|
 
 :author:       David Hoese (davidh)
-:contact:      david.hoese@ssec.wisc.edu
 :organization: Space Science and Engineering Center (SSEC)
-:copyright:    Copyright (c) 2014 University of Wisconsin SSEC. All rights reserved.
+:copyright:    Copyright (c) 2012-2015 University of Wisconsin SSEC. All rights reserved.
 :date:         Dec 2014
 :license:      GNU GPLv3
 """
@@ -92,14 +177,14 @@ K_CREFL10 = "crefl10_fk"
 
 # File Info for CREFL files
 
-class FileInfo(object):
-    def __init__(self, var_name, scale_attr_name="scale_factor", offset_attr_name="add_offset",
-                 fill_attr_name="_FillValue", data_type=numpy.float32):
-        self.var_name = var_name
-        self.data_type = data_type
-        self.scale_attr_name = scale_attr_name
-        self.offset_attr_name = offset_attr_name
-        self.fill_attr_name = fill_attr_name
+class FileInfo(modis_guidebook.FileInfo):
+    def __init__(self, *args, **kwargs):
+        # I think (from reading source code) that 32767 is fill, 32766 is missing, 32765 is saturated
+        # The saturated pixels then should therefore already be at the top of the range
+        kwargs.setdefault("range_attr_name", (0, 32765))
+        kwargs.setdefault("fill_attr_name", 32766)
+        # kwargs.setdefault("clip_saturated", True)  # not needed since the sat value is the top value
+        super(FileInfo, self).__init__(*args, **kwargs)
 
 FILE_TYPES = {}
 FILE_TYPES[FT_CREFL_1000M] = {
@@ -145,45 +230,7 @@ FILE_TYPES[FT_CREFL_I] = {
 
 
 class MODISFileReader(modis_guidebook.FileReader):
-    def get_swath_data(self, item, fill=None):
-        if fill is None:
-            fill = self.get_fill_value(item)
-
-        var_info = self.file_type_info[item]
-        var_name = var_info.var_name
-        scale_factor_attr_name = var_info.scale_attr_name
-        scale_offset_attr_name = var_info.offset_attr_name
-        fill_attr_name = var_info.fill_attr_name
-
-        # Get the band data from the file
-        variable = self[var_name]
-        data = variable.get()
-
-        if fill_attr_name:
-            input_fill_value = self[var_name + "." + fill_attr_name]
-            LOG.debug("Using fill value attribute '%s' (%s) to filter bad data", fill_attr_name, str(input_fill_value))
-            input_fill_value = 16000
-            LOG.debug("Ignoring fill value and using '%s' instead", str(input_fill_value))
-            fill_mask = data > input_fill_value
-        else:
-            fill_mask = numpy.zeros_like(data).astype(numpy.bool)
-
-        if isinstance(scale_factor_attr_name, float):
-            scale_factor = scale_factor_attr_name
-        elif scale_factor_attr_name is not None:
-            scale_factor = self[var_name + "." + scale_factor_attr_name]
-
-        if isinstance(scale_offset_attr_name, float):
-            scale_offset = scale_offset_attr_name
-        elif scale_offset_attr_name is not None:
-            scale_offset = self[var_name + "." + scale_offset_attr_name]
-
-        # Scale the data
-        if scale_factor_attr_name is not None and scale_offset_attr_name is not None:
-            data = data * scale_factor + scale_offset
-        data[fill_mask] = fill
-
-        return data
+    pass
 
 
 class VIIRSCreflReader(modis_guidebook.HDFReader):
@@ -326,6 +373,17 @@ VIIRS_FALSE_COLOR_PRODUCTS = [PRODUCT_VCR07, PRODUCT_VCR02, PRODUCT_VCR01, PRODU
 MODIS_FALSE_COLOR_PRODUCTS = [PRODUCT_MCR07_1000M, PRODUCT_MCR02_1000M, PRODUCT_MCR01_1000M, PRODUCT_MCR01_250M]
 FALSE_COLOR_PRODUCTS = VIIRS_FALSE_COLOR_PRODUCTS + MODIS_FALSE_COLOR_PRODUCTS
 
+# VIIRS Band to CREFL bands
+# M05 = CR01
+# M07 = CR02
+# M03 = CR03
+# M04 = CR04
+# M08 = CR05
+# M10 = CR06
+# M11 = CR07
+# I01 = CR08
+# I02 = CR09
+# I03 = CR10
 
 class Frontend(roles.FrontendRole):
     def __init__(self, use_terrain_corrected=True, ignore_crefl=False, **kwargs):
@@ -504,7 +562,7 @@ class Frontend(roles.FrontendRole):
                 raise RuntimeError("Can not create MODIS crefl files with out 1000m files")
 
             # Use the MODIS Frontend to determine if we have enough day time data
-            LOG.info("Loading the MODIS frontend to check for daytime data")
+            LOG.debug("Loading the MODIS frontend to check for daytime data")
             f = modis_module.Frontend(search_paths=self.file_readers[FT_GEO].filepaths)
             scene = f.create_scene(products=[modis_module.PRODUCT_SZA])
             day_percentage = f._get_day_percentage(scene[modis_module.PRODUCT_SZA])
@@ -545,7 +603,7 @@ class Frontend(roles.FrontendRole):
             geo_files = self.file_readers[ft].filepaths
 
             # Use the VIIRS Frontend to determine if we have enough day time data
-            LOG.info("Loading the VIIRS frontend to check for daytime data")
+            LOG.debug("Loading the VIIRS frontend to check for daytime data")
             f = viirs_module.Frontend(search_paths=geo_files)
             scene = f.create_scene(products=[viirs_module.PRODUCT_M_SZA])
             day_percentage = f._get_day_percentage(scene[viirs_module.PRODUCT_M_SZA])
@@ -654,7 +712,7 @@ class Frontend(roles.FrontendRole):
         file_reader = self.file_readers[file_type]
         LOG.debug("Using file type '%s' and getting file key '%s' for product '%s'", file_type, file_key, product_name)
 
-        LOG.info("Writing product '%s' data to binary file", product_name)
+        LOG.debug("Writing product '%s' data to binary file", product_name)
         filename = product_name + ".dat"
         if os.path.isfile(filename):
             if not self.overwrite_existing:
@@ -687,10 +745,10 @@ class Frontend(roles.FrontendRole):
         pass
 
     def create_scene(self, products=None, **kwargs):
-        LOG.info("Loading scene data...")
+        LOG.debug("Loading scene data...")
         # If the user didn't provide the products they want, figure out which ones we can create
         if products is None:
-            LOG.info("No products specified to frontend, will try to load logical defaults products")
+            LOG.debug("No products specified to frontend, will try to load logical defaults products")
             products = self.default_products
 
         # Do we actually have all of the files needed to create the requested products?

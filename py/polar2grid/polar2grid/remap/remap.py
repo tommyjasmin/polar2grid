@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
-# Copyright (C) 2014 Space Science and Engineering Center (SSEC),
+# Copyright (C) 2012-2015 Space Science and Engineering Center (SSEC),
 # University of Wisconsin-Madison.
 #
 # This program is free software: you can redistribute it and/or modify
@@ -27,12 +27,55 @@
 # 1225 West Dayton Street
 # Madison, WI  53706
 # david.hoese@ssec.wisc.edu
-"""Interface to remapping polar2grid data.
+"""Remapping is the process of mapping satellite data swaths to a uniform grid. Mapping
+data to a uniform grid makes it easier to view, manipulate, and store the data.
+In Polar2Grid, this is usually done using a 2-step process.
+
+Gridding
+--------
+
+The first step is called 'll2cr' which stands for "longitude/latitude to
+column/row". This step maps the pixel location (lon/lat space) into grid
+space. Polar2Grid uses grids defined by a PROJ.4 projection specification.
+Other parameters that define a grid like its width and height can be
+determined dynamically during this step. A grid is defined by the following parameters:
+
+ - Grid Name
+ - PROJ.4 String (either lat/lon or metered projection space)
+ - Width (number of pixels in the X direction)
+ - Height (number of pixels in the Y direction)
+ - Cell Width (pixel size in the X direction in grid units)
+ - Cell Height (pixel size in the Y direction in grid units)
+ - X Origin (upper-left X coordinate in grid units)
+ - Y Origin (upper-left Y coordinate in grid units)
+
+Polar2Grid supports static and dynamic grids. Grids are static if they have all of the
+above attributes defined. Grids are dynamic if some of the attributes are not defined.
+These attributes are then computed at run time based on the data being remapped. Only
+width/height and x/y origin can be unspecified in dynamic grids.
+
+For information on defining your own custom grids see the :doc:`Developer's Guide <dev_guide/grids>`.
+
+Resampling
+----------
+
+The second step of remapping is
+to resample the input swath pixels to each output grid pixel. Polar2Grid
+provides an 'elliptical weight averaging' or 'EWA' resampling method as
+well as the traditional nearest neighbor method, with other algorithms
+planned for future releases. In the past both of these steps were handled
+by third-party software, but have been rewritten to be directly accessed
+from python.
+
+.. note::
+
+    The nearest neighbor resampling method (nearest) is experimental and will be
+    replaced by a more stable implementation in future releases.
+
 
 :author:       David Hoese (davidh)
-:contact:      david.hoese@ssec.wisc.edu
 :organization: Space Science and Engineering Center (SSEC)
-:copyright:    Copyright (c) 2013 University of Wisconsin SSEC. All rights reserved.
+:copyright:    Copyright (c) 2012-2015 University of Wisconsin SSEC. All rights reserved.
 :date:         Oct 2014
 :license:      GNU GPLv3
 
@@ -42,7 +85,7 @@ __docformat__ = "restructuredtext en"
 from polar2grid.core.containers import GriddedProduct, GriddedScene, SwathScene
 from polar2grid.remap import ll2cr as ll2cr  # gridinator
 from polar2grid.remap import fornav
-from polar2grid.grids.grids import Cartographer
+from polar2grid.grids import GridManager
 
 import os
 import sys
@@ -56,6 +99,8 @@ from scipy.interpolate.interpnd import _ndim_coords_from_arrays
 from scipy.spatial import cKDTree
 
 LOG = logging.getLogger(__name__)
+SWATH_USAGE = os.environ.get("P2G_SWATH_USAGE", 0)
+GRID_COVERAGE = os.environ.get("P2G_GRID_COVERAGE", 0.1)
 
 
 def mask_helper(arr, fill):
@@ -78,7 +123,7 @@ def init_worker():
 class Remapper(object):
     def __init__(self, grid_configs=[],
                  overwrite_existing=False, keep_intermediate=False, exit_on_error=True, **kwargs):
-        self.cart = Cartographer(*grid_configs)
+        self.grid_manager = GridManager(*grid_configs)
         self.overwrite_existing = overwrite_existing
         self.keep_intermediate = keep_intermediate
         self.exit_on_error = exit_on_error
@@ -105,7 +150,7 @@ class Remapper(object):
             LOG.error("Unknown remapping method '%s'", method)
             raise ValueError("Unknown remapping method '%s'" % (method,))
 
-        grid_def = self.cart.get_grid_definition(grid_name)
+        grid_def = self.grid_manager.get_grid_definition(grid_name)
         func = self.methods[method]
 
         # FUTURE: Make this a keyword and add the logic to support it
@@ -114,14 +159,16 @@ class Remapper(object):
             best_swath_def = self.highest_resolution_swath_definition(swath_scene)
             LOG.debug("Running ll2cr on the highest resolution swath to determine if it fits")
             try:
-                self.run_ll2cr(best_swath_def, grid_def)
+                self.run_ll2cr(best_swath_def, grid_def, swath_usage=kwargs.get("swath_usage", SWATH_USAGE))
+                grid_str = str(grid_def).replace("\n", "\n\t")
+                LOG.info("Grid information:\n\t%s", grid_str)
             except StandardError:
                 LOG.error("Remapping error")
                 raise
 
         return func(swath_scene, grid_def, **kwargs)
 
-    def run_ll2cr(self, swath_definition, grid_definition):
+    def run_ll2cr(self, swath_definition, grid_definition, swath_usage=SWATH_USAGE):
         geo_id = swath_definition["swath_name"]
         grid_name = grid_definition["grid_name"]
         if (geo_id, grid_name) in self.ll2cr_cache:
@@ -157,7 +204,7 @@ class Remapper(object):
             #                                    cols_out=cols_arr, rows_out=rows_arr)
 
             grid_str = str(grid_definition).replace("\n", "\n\t")
-            LOG.debug("Grid information after ll2cr:\n\t%s", grid_str)
+            LOG.debug("Grid information:\n\t%s", grid_str)
         except StandardError:
             LOG.error("Unexpected error encountered during ll2cr gridding for %s -> %s", geo_id, grid_name)
             LOG.debug("ll2cr error exception: ", exc_info=True)
@@ -166,8 +213,8 @@ class Remapper(object):
 
         # if 5% of the grid will have data in it then it fits
         fraction_in = points_in_grid / float(rows_arr.size)
-        fits_grid = fraction_in >= 0.05
-        if not fits_grid and not os.getenv("P2G_FITS_GRID", None):
+        swath_used = fraction_in > swath_usage
+        if not swath_used:
             self._safe_remove(rows_fn, cols_fn)
             LOG.error("Data does not fit in grid %s because it only %f%% of the swath is used" % (grid_name, fraction_in * 100))
             raise RuntimeError("Data does not fit in grid %s" % (grid_name,))
@@ -185,7 +232,7 @@ class Remapper(object):
             for fp in filepaths:
                 if os.path.isfile(fp):
                     try:
-                        LOG.info("Removing intermediate file '%s'...", fp)
+                        LOG.debug("Removing intermediate file '%s'...", fp)
                         os.remove(fp)
                     except OSError:
                         LOG.warning("Could not remove intermediate files that aren't needed anymore.")
@@ -195,6 +242,7 @@ class Remapper(object):
         # Remove ll2cr files now that we are done with them
         for cols_fn, rows_fn in self.ll2cr_cache.values():
             self._safe_remove(rows_fn, cols_fn)
+        self.ll2cr_cache = {}
 
     def _remap_scene_ewa(self, swath_scene, grid_def, share_dynamic_grids=True, **kwargs):
         # TODO: Make methods more flexible than just a function call
@@ -210,12 +258,14 @@ class Remapper(object):
 
         for geo_id, product_names in product_groups.items():
             try:
-                LOG.info("Running ll2cr on the geolocation data for the following products:\n\t%s", "\n\t".join(sorted(product_names)))
+                LOG.debug("Running ll2cr on the geolocation data for the following products:\n\t%s", "\n\t".join(sorted(product_names)))
                 swath_def = swath_scene[product_names[0]]["swath_definition"]
                 if not share_dynamic_grids:
-                    cols_fn, rows_fn = self.run_ll2cr(swath_def, grid_def.copy())
+                    cols_fn, rows_fn = self.run_ll2cr(swath_def, grid_def.copy(),
+                                                      swath_usage=kwargs.get("swath_usage", SWATH_USAGE))
                 else:
-                    cols_fn, rows_fn = self.run_ll2cr(swath_def, grid_def)
+                    cols_fn, rows_fn = self.run_ll2cr(swath_def, grid_def,
+                                                      swath_usage=kwargs.get("swath_usage", SWATH_USAGE))
             except StandardError:
                 LOG.error("Remapping error")
                 if self.exit_on_error:
@@ -223,7 +273,7 @@ class Remapper(object):
                 continue
 
             # Run fornav for all of the products at once
-            LOG.info("Running fornav for the following products:\n\t%s", "\n\t".join(sorted(product_names)))
+            LOG.debug("Running fornav for the following products:\n\t%s", "\n\t".join(sorted(product_names)))
             # XXX: May have to do something smarter if there are float products and integer products together (is_category property on SwathProduct?)
             product_filepaths = list(swath_scene.get_data_filepaths(product_names))
             fornav_filepaths = self._add_prefix("grid_%s_" % (grid_name,), *product_filepaths)
@@ -276,7 +326,7 @@ class Remapper(object):
                 # Assumed that all share the same fill value and data type
                 input_dtype = [swath_scene[pn]["data_type"] for pn in product_names]
                 input_fill = [swath_scene[pn]["fill_value"] for pn in product_names]
-                got_points = fornav.fornav(cols_array,
+                valid_list = fornav.fornav(cols_array,
                               rows_array,
                               rows_per_scan,
                               product_filepaths,
@@ -290,9 +340,6 @@ class Remapper(object):
                               maximum_weight_mode=kwargs.get("maximum_weight_mode", False),
                               use_group_size=True
                 )
-                if not got_points:
-                    LOG.error("EWA resampling found 0 points inside the requested grid")
-                    raise RuntimeError("EWA resampling found 0 points inside the requested grid")
             except StandardError:
                 LOG.debug("Remapping exception: ", exc_info=True)
                 LOG.error("Remapping error")
@@ -303,19 +350,33 @@ class Remapper(object):
                 continue
 
             # Give the gridded product ownership of the remapped data
-            for product_name, fornav_fp in zip(product_names, fornav_filepaths):
+            for product_name, fornav_fp, valid_points in zip(product_names, fornav_filepaths, valid_list):
                 swath_product = swath_scene[product_name]
                 gridded_product = GriddedProduct()
                 gridded_product.from_swath_product(swath_product)
                 gridded_product["grid_definition"] = grid_def
                 gridded_product["fill_value"] = numpy.nan
                 gridded_product["grid_data"] = fornav_fp
+
+                grid_coverage = kwargs.get("grid_coverage", GRID_COVERAGE)
+                grid_covered_ratio = valid_points / float(grid_def["width"] * grid_def["height"])
+                grid_covered = grid_covered_ratio > grid_coverage
+                if not grid_covered:
+                    msg = "EWA resampling only found %f%% of the grid covered (need %f%%) for %s" % (grid_covered_ratio * 100, grid_coverage * 100, product_name)
+                    LOG.warning(msg)
+                    continue
+                LOG.debug("EWA resampling found %f%% of the grid covered for %s" % (grid_covered_ratio * 100, product_name))
                 gridded_scene[product_name] = gridded_product
 
         self._clear_ll2cr_cache()
+
+        if not gridded_scene:
+            self._safe_remove(*fornav_filepaths)
+            raise RuntimeError("EWA resampling could not remap any of the data to grid '%s'" % (grid_name,))
+
         return gridded_scene
 
-    def _remap_scene_nearest(self, swath_scene, grid_def, share_dynamic_grids=True, **kwargs):
+    def _remap_scene_nearest(self, swath_scene, grid_def, share_dynamic_grids=True, share_remap_mask=True, **kwargs):
         # TODO: Make methods more flexible than just a function call
         gridded_scene = GriddedScene()
         grid_name = grid_def["grid_name"]
@@ -329,7 +390,7 @@ class Remapper(object):
 
         for geo_id, product_names in product_groups.items():
             pp_names = "\n\t".join(product_names)
-            LOG.info("Running ll2cr on the geolocation data for the following products:\n\t%s", pp_names)
+            LOG.debug("Running ll2cr on the geolocation data for the following products:\n\t%s", pp_names)
             LOG.debug("Swath name: %s", geo_id)
 
             # TODO: Move into it's own function if this gets complicated
@@ -346,7 +407,7 @@ class Remapper(object):
                     raise
                 continue
 
-            LOG.info("Running nearest neighbor for the following products:\n\t%s", "\n\t".join(product_names))
+            LOG.debug("Running nearest neighbor for the following products:\n\t%s", "\n\t".join(product_names))
             edge_res = swath_def.get("limb_resolution", None)
             if kwargs.get("distance_upper_bound", None) is None:
                 if edge_res is not None:
@@ -359,15 +420,27 @@ class Remapper(object):
                     distance_upper_bound = 3.0
                 kwargs["distance_upper_bound"] = distance_upper_bound
 
-            grid_x, grid_y = numpy.mgrid[:grid_def["height"], :grid_def["width"]]
-            # we need flattened versions of these
-            shape = (swath_def["swath_rows"] * swath_def["swath_columns"],)
-            cols_array = numpy.memmap(cols_fn, shape=shape, dtype=swath_def["data_type"])
-            rows_array = numpy.memmap(rows_fn, shape=shape, dtype=swath_def["data_type"])
-            good_mask = ~mask_helper(cols_array, swath_def["fill_value"])
-            x = _ndim_coords_from_arrays((cols_array[good_mask], rows_array[good_mask]))
-            xi = _ndim_coords_from_arrays((grid_y, grid_x))
-            dist, i = cKDTree(x).query(xi, distance_upper_bound=kwargs["distance_upper_bound"])
+            try:
+                grid_x, grid_y = numpy.mgrid[:grid_def["height"], :grid_def["width"]]
+                # we need flattened versions of these
+                shape = (swath_def["swath_rows"] * swath_def["swath_columns"],)
+                cols_array = numpy.memmap(cols_fn, shape=shape, dtype=swath_def["data_type"])
+                rows_array = numpy.memmap(rows_fn, shape=shape, dtype=swath_def["data_type"])
+                good_mask = ~mask_helper(cols_array, swath_def["fill_value"])
+                if share_remap_mask:
+                    for product_name in product_names:
+                        LOG.debug("Combining data masks before building KDTree for nearest neighbor: %s", product_name)
+                        good_mask &= ~swath_scene[product_name].get_data_mask().ravel()
+                x = _ndim_coords_from_arrays((cols_array[good_mask], rows_array[good_mask]))
+                xi = _ndim_coords_from_arrays((grid_y, grid_x))
+                dist, i = cKDTree(x).query(xi, distance_upper_bound=kwargs["distance_upper_bound"])
+            except StandardError:
+                LOG.debug("Remapping exception: ", exc_info=True)
+                LOG.error("Remapping error")
+                if self.exit_on_error:
+                    self._clear_ll2cr_cache()
+                    raise
+                continue
 
             product_filepaths = swath_scene.get_data_filepaths(product_names)
             output_filepaths = self._add_prefix("grid_%s_" % (grid_name,), *product_filepaths)
@@ -403,17 +476,20 @@ class Remapper(object):
                 except StandardError:
                     LOG.debug("Remapping exception: ", exc_info=True)
                     LOG.error("Remapping error")
-                    self._safe_remove(rows_fn, cols_fn, output_fn)
-                    if not self.keep_intermediate and os.path.isfile(output_fn):
-                        os.remove(output_fn)
+                    self._safe_remove(output_fn)
                     if self.exit_on_error:
+                        self._clear_ll2cr_cache()
                         raise
                     continue
 
                 LOG.debug("Done running nearest neighbor on '%s'", product_name)
 
-            # Remove ll2cr files now that we are done with them
-            self._safe_remove(rows_fn, cols_fn)
+
+        # Remove ll2cr files now that we are done with them
+        self._clear_ll2cr_cache()
+
+        if not gridded_scene:
+            raise RuntimeError("Nearest neighbor resampling could not remap any of the data to grid '%s'" % (grid_name,))
 
         return gridded_scene
 
@@ -433,6 +509,10 @@ def add_remap_argument_groups(parser):
                        help="Force remapping to only some grids, defaults to 'wgs84_fit', use 'all' for determination")
     group.add_argument("--method", dest="remap_method", default=SUPPRESS, choices=["ewa", "nearest"],
                        help="Remapping algorithm to use")
+    group.add_argument('--swath-usage', dest="swath_usage", default=0, type=float,
+                       help="Fraction of swath that must be used to continue remapping/processing (default 0)")
+    group.add_argument('--grid-coverage', dest="grid_coverage", default=0.1, type=float,
+                       help="Fraction of grid that must be covered with valid data to continue processing (default 0.1)")
     group.add_argument('--fornav-D', dest='fornav_D', default=SUPPRESS, type=float,
                        help="Specify the -D option for fornav")
     group.add_argument('--fornav-d', dest='fornav_d', default=SUPPRESS, type=float,
@@ -441,6 +521,8 @@ def add_remap_argument_groups(parser):
                        help="Use maximum weight mode in fornav (-m)")
     group.add_argument("--distance-upper-bound", dest="distance_upper_bound", type=float, default=None,
                        help="Nearest neighbor search distance upper bound in units of grid cell")
+    group.add_argument("--no-share-mask", dest="share_remap_mask", action="store_false",
+                       help="Don't share invalid masks between nearest neighbor resampling (slow)")
     group.add_argument("--no-share-grid", dest="share_dynamic_grid", action="store_false",
                        help="Calculate dynamic grid attributes for every grid (instead of sharing highest resolution)")
     return ["Remapping Initialization", "Remapping"]
@@ -453,6 +535,8 @@ def main():
     subgroup_titles = add_remap_argument_groups(parser)
     parser.add_argument("--scene", required=True,
                         help="JSON SwathScene filename to be remapped")
+    parser.add_argument('-o', dest="output_filename", default="gridded_scene_{grid_name}.json",
+                        help="Output filename for JSON scene (default is to 'gridded_scene_{grid_name}.json')")
     global_keywords = ("keep_intermediate", "overwrite_existing", "exit_on_error")
     args = parser.parse_args(subgroup_titles=subgroup_titles, global_keywords=global_keywords)
 
@@ -461,16 +545,22 @@ def main():
     sys.excepthook = create_exc_handler(LOG.name)
     LOG.debug("Starting script with arguments: %s", " ".join(sys.argv))
 
+    if args.output_filename and args.output_filename != "-" and os.path.isfile(args.output_filename):
+            LOG.error("JSON file '%s' already exists, will not overwrite." % (args.output_filename,))
+            raise RuntimeError("JSON file '%s' already exists, will not overwrite." % (args.output_filename,))
+
     scene = SwathScene.load(args.scene)
 
     remapper = Remapper(**args.subgroup_args["Remapping Initialization"])
     remap_kwargs = args.subgroup_args["Remapping"]
-    for grid_name in remap_kwargs.pop("forced_grids"):
+    for grid_name in remap_kwargs.pop("forced_grids", ["wgs84_fit"]):
         gridded_scene = remapper.remap_scene(scene, grid_name, **remap_kwargs)
-        # FIXME: Either allow only 1 grid or find a nice way to output multiple gridded scenes as JSON to stdout
-        fn = "gridded_scene_%s.json" % (grid_name,)
-        LOG.info("Saving gridded scene to file: %s", fn)
-        gridded_scene.save(fn)
+        if args.output_filename is None or args.output_filename == "-":
+            print(gridded_scene.dumps(persist=True))
+        else:
+            fn = args.output_filename.format(grid_name=grid_name)
+            LOG.info("Saving gridded scene to file: %s", fn)
+            gridded_scene.save(fn)
 
 if __name__ == "__main__":
     sys.exit(main())

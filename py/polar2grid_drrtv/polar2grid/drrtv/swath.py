@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
-# Copyright (C) 2014 Space Science and Engineering Center (SSEC),
+# Copyright (C) 2012-2015 Space Science and Engineering Center (SSEC),
 # University of Wisconsin-Madison.
 #
 # This program is free software: you can redistribute it and/or modify
@@ -27,53 +27,65 @@
 # 1225 West Dayton Street
 # Madison, WI  53706
 # david.hoese@ssec.wisc.edu
-"""
-CrIS EDR front end for polar2grid, which extracts band-pass slices of brightness temperature data.
+"""The Dual Regression Retrieval (DR-RTV) frontend reads HDF5 files created by DR-RTV software
+created by Bill Smith Sr., Elisabeth Wiessz, and Nadia Smith at the Space Science and Engineering Center.
 
-:author:       Ray Garcia (rayg)
-:author:       David Hoese (davidh)
-:contact:      rayg@ssec.wisc.edu
-:organization: Space Science and Engineering Center (SSEC)
-:copyright:    Copyright (c) 2014 University of Wisconsin SSEC. All rights reserved.
-:date:         Nov 2014
-:license:      GNU GPLv3
-
-Note that Dual Regression products are indexed strangely:
+Note that Dual Regression products are indexed differently than other satellite-based products:
   [in-track, cross-track] for 2D variables
   [level, in-track, cross-track] for 3D variables
 
-Example:
-[(u'CAPE', (84, 60)),
- (u'CO2_Amount', (84, 60)),
- (u'COT', (84, 60)),
- (u'CTP', (84, 60)),
- (u'CTT', (84, 60)),
- (u'Channel_Index', (7021,)),
- (u'CldEmis', (84, 60)),
- (u'Cmask', (84, 60)),
- (u'Dewpnt', (101, 84, 60)),
- (u'GDAS_RelHum', (101, 84, 60)),
- (u'GDAS_TAir', (101, 84, 60)),
- (u'H2OMMR', (101, 84, 60)),
- (u'H2Ohigh', (84, 60)),
- (u'H2Olow', (84, 60)),
- (u'H2Omid', (84, 60)),
- (u'Latitude', (84, 60)),
- (u'Lifted_Index', (84, 60)),
- (u'Longitude', (84, 60)),
- (u'O3VMR', (101, 84, 60)),
- (u'Plevs', (101,)),
- (u'Qflag1', (84, 60)),
- (u'Qflag2', (84, 60)),
- (u'Qflag3', (84, 60)),
- (u'RelHum', (101, 84, 60)),
- (u'SurfEmis', (8461, 84, 60)),
- (u'SurfEmis_Wavenumbers', (8461,)),
- (u'SurfPres', (84, 60)),
- (u'TAir', (101, 84, 60)),
- (u'TSurf', (84, 60)),
- (u'totH2O', (84, 60)),
- (u'totO3', (84, 60))]
+The frontend provides the products listed below. Some products are extracted per pressure level and has special
+suffixes. Suffixes are "_100mb", "_200mb", "_300mb", "_400mb", "_500mb", "_600mb", "_700mb", and "_800mb".
+
+
+    +--------------------+--------------------------------------------+
+    | Product Name       | Description                                |
+    +====================+============================================+
+    | CAPE               | Convective Available Potential Energy      |
+    +--------------------+--------------------------------------------+
+    | CO2_Amount         | Carbon Dioxide Amount                      |
+    +--------------------+--------------------------------------------+
+    | COT                | Cloud Optical Thickness                    |
+    +--------------------+--------------------------------------------+
+    | CTP                | Cloud Top Pressure                         |
+    +--------------------+--------------------------------------------+
+    | CTT                | Cloud Top Temperature                      |
+    +--------------------+--------------------------------------------+
+    | CldEmis            | Cloud Emissivity                           |
+    +--------------------+--------------------------------------------+
+    | Cmask              | Cloud Mask                                 |
+    +--------------------+--------------------------------------------+
+    | Lifted_Index       | Lifted Index                               |
+    +--------------------+--------------------------------------------+
+    | SurfPres           | Surface Pressure                           |
+    +--------------------+--------------------------------------------+
+    | TSurf              | Surface Temperature                        |
+    +--------------------+--------------------------------------------+
+    | totH2O             | Total Water                                |
+    +--------------------+--------------------------------------------+
+    | totO3              | Total Ozone                                |
+    +--------------------+--------------------------------------------+
+    | *Level based products*                                          |
+    +--------------------+--------------------------------------------+
+    | Dewpnt_100mb       | Dewpoint Temperature                       |
+    +--------------------+--------------------------------------------+
+    | H2OMMR_100mb       | Water Mixing Ratio                         |
+    +--------------------+--------------------------------------------+
+    | O3VMR_100mb        | Ozone Mixing Ratio                         |
+    +--------------------+--------------------------------------------+
+    | RelHum_100mb       | Relative Humidity                          |
+    +--------------------+--------------------------------------------+
+    | TAir_100mb         | Air Temperature                            |
+    +--------------------+--------------------------------------------+
+
+|
+
+:author:       Ray Garcia (rayg)
+:author:       David Hoese (davidh)
+:organization: Space Science and Engineering Center (SSEC)
+:copyright:    Copyright (c) 2012-2015 University of Wisconsin SSEC. All rights reserved.
+:date:         Nov 2014
+:license:      GNU GPLv3
 
 
 """
@@ -348,9 +360,34 @@ DEWPOINT_PRODUCTS = []
 WATER_MMR_PRODUCTS = []
 OZONE_VMR_PRODUCTS = []
 RELHUM_PRODUCTS = []
+# All levels
+all_lvl_ranges = [
+    0.005, 0.0161, 0.0384, 0.0769, 0.137, 0.2244, 0.3454, 0.5064, 0.714,
+    0.9753, 1.2972, 1.6872, 2.1526, 2.7009, 3.3398, 4.077, 4.9204,
+    5.8776, 6.9567, 8.1655, 9.5119, 11.0038, 12.6492, 14.4559, 16.4318,
+    18.5847, 20.9224, 23.4526, 26.1829, 29.121, 32.2744, 35.6505,
+    39.2566, 43.1001, 47.1882, 51.5278, 56.126, 60.9895, 66.1253,
+    71.5398, 77.2396, 83.231, 89.5204, 96.1138, 103.017, 110.237,
+    117.777, 125.646, 133.846, 142.385, 151.266, 160.496, 170.078,
+    180.018, 190.32, 200.989, 212.028, 223.441, 235.234, 247.408,
+    259.969, 272.919, 286.262, 300, 314.137, 328.675, 343.618, 358.966,
+    374.724, 390.893, 407.474, 424.47, 441.882, 459.712, 477.961,
+    496.63, 515.72, 535.232, 555.167, 575.525, 596.306, 617.511, 639.14,
+    661.192, 683.667, 706.565, 729.886, 753.628, 777.79, 802.371,
+    827.371, 852.788, 878.62, 904.866, 931.524, 958.591, 986.067,
+    1013.95, 1042.23, 1070.92, 1100
+]
+# Every 100
 lvl_range = [100, 200, 300, 400, 500, 600, 700, 800]
+# lvl_range = all_lvl_ranges
+
 for lvl_num in lvl_range:
-    suffix = "_%dmb" % (lvl_num,)
+    if lvl_num < 5.0:
+        # Rounding doesn't work when there are multiple pressure levels per integer
+        suffix = "_%0.03fmb" % (lvl_num,)
+    else:
+        suffix = "_%dmb" % (lvl_num,)
+
     PRODUCTS.add_product(PRODUCT_TAIR + suffix, BASE_PAIR, "air_temperature", FT_DRRTV, "TAir", pressure=lvl_num)
     PRODUCTS.add_product(PRODUCT_DEWPOINT + suffix, BASE_PAIR, "dewpoint_temperature", FT_DRRTV, "Dewpnt", pressure=lvl_num)
     PRODUCTS.add_product(PRODUCT_WATER_MMR + suffix, BASE_PAIR, "mixing_ratio", FT_DRRTV, "H2OMMR", pressure=lvl_num)
@@ -427,7 +464,7 @@ class Frontend(FrontendRole):
         pressure = getattr(product_def, "pressure", None)
         LOG.debug("Getting file key '%s' for product '%s'", file_key, product_name)
 
-        LOG.info("Writing product '%s' data to binary file", product_name)
+        LOG.debug("Writing product '%s' data to binary file", product_name)
         filename = product_name + ".dat"
         if os.path.isfile(filename):
             if not self.overwrite_existing:
@@ -488,10 +525,10 @@ class Frontend(FrontendRole):
         return swath_definition
 
     def create_scene(self, products=None, **kwargs):
-        LOG.info("Loading scene data...")
+        LOG.debug("Loading scene data...")
         # If the user didn't provide the products they want, figure out which ones we can create
         if products is None:
-            LOG.info("No products specified to frontend, will try to load logical defaults products")
+            LOG.debug("No products specified to frontend, will try to load logical defaults products")
             products = self.default_products
 
         # Do we actually have all of the files needed to create the requested products?
@@ -559,7 +596,7 @@ def add_frontend_argument_groups(parser):
     from polar2grid.core.script_utils import ExtendAction, ExtendConstAction
     # Set defaults for other components that may be used in polar2grid processing
     # remapping microwave data with EWA doesn't look very good, so default to nearest neighbor
-    parser.set_defaults(fornav_D=40, fornav_d=2, remap_method="nearest")
+    parser.set_defaults(fornav_D=40, fornav_d=2, share_remap_mask=False, remap_method="nearest")
 
     # Use the append_const action to handle adding products to the list
     group_title = "Frontend Initialization"

@@ -55,13 +55,13 @@ cdef extern from "_fornav_templates.h":
     #cdef int write_grid_image[GRID_TYPE](GRID_TYPE *output_image, GRID_TYPE fill, size_t grid_cols, size_t grid_rows,
     #    accum_type *grid_accum, weight_type *grid_weights,
     #    int maximum_weight_mode, weight_type weight_sum_min)
-    cdef int write_grid_image(numpy.float32_t *output_image, numpy.float32_t fill, size_t grid_cols, size_t grid_rows,
+    cdef unsigned int write_grid_image(numpy.float32_t *output_image, numpy.float32_t fill, size_t grid_cols, size_t grid_rows,
         accum_type *grid_accum, weight_type *grid_weights,
         int maximum_weight_mode, weight_type weight_sum_min)
-    cdef int write_grid_image(numpy.float64_t *output_image, numpy.float64_t fill, size_t grid_cols, size_t grid_rows,
+    cdef unsigned int write_grid_image(numpy.float64_t *output_image, numpy.float64_t fill, size_t grid_cols, size_t grid_rows,
         accum_type *grid_accum, weight_type *grid_weights,
         int maximum_weight_mode, weight_type weight_sum_min)
-    cdef int write_grid_image(numpy.int8_t *output_image, numpy.int8_t fill, size_t grid_cols, size_t grid_rows,
+    cdef unsigned int write_grid_image(numpy.int8_t *output_image, numpy.int8_t fill, size_t grid_cols, size_t grid_rows,
         accum_type *grid_accum, weight_type *grid_weights,
         int maximum_weight_mode, weight_type weight_sum_min)
 
@@ -82,7 +82,7 @@ ctypedef fused grid_dtype:
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef int fornav(size_t chan_count, size_t swath_cols, size_t swath_rows, size_t grid_cols, size_t grid_rows,
+cdef int fornav(unsigned int *valid_list, size_t chan_count, size_t swath_cols, size_t swath_rows, size_t grid_cols, size_t grid_rows,
             cr_dtype *cols_pointer, cr_dtype *rows_pointer,
            image_dtype **input_arrays, grid_dtype **output_arrays,
            image_dtype input_fill, grid_dtype output_fill, size_t rows_per_scan,
@@ -93,8 +93,6 @@ cdef int fornav(size_t chan_count, size_t swath_cols, size_t swath_rows, size_t 
     cdef bint got_point = 0
     cdef bint tmp_got_point
     cdef int func_result
-    cdef int fill_count = 0
-    cdef int tmp_fill_count
     cdef cr_dtype *tmp_cols_pointer
     cdef cr_dtype *tmp_rows_pointer
     cdef image_dtype **input_images
@@ -161,17 +159,15 @@ cdef int fornav(size_t chan_count, size_t swath_cols, size_t swath_rows, size_t 
         raise RuntimeError("EWA Resampling: No swath pixels found inside grid to be resampled")
 
     for idx in range(chan_count):
-        tmp_fill_count = write_grid_image(output_arrays[idx], output_fill, grid_cols, grid_rows,
+        valid_list[idx] = write_grid_image(output_arrays[idx], output_fill, grid_cols, grid_rows,
                                           grid_accums[idx], grid_weights[idx], maximum_weight_mode, weight_sum_min)
-        if tmp_fill_count < 0:
-            raise RuntimeError("Could not write result to output arrays")
-        fill_count += tmp_fill_count
 
     # free(grid_accums)
     deinitialize_weight(&ewaw)
     deinitialize_grids(chan_count, <void **>grid_accums)
     deinitialize_grids(chan_count, <void **>grid_weights)
-    return fill_count
+
+    return 0
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -210,12 +206,14 @@ def fornav_wrapper(numpy.ndarray[cr_dtype, ndim=2, mode='c'] cols_array,
     cdef void **output_pointer = <void **>malloc(num_items * sizeof(void *))
     if not output_pointer:
         raise MemoryError()
+    cdef unsigned int *valid_arr = <unsigned int *>malloc(num_items * sizeof(unsigned int))
+    valid_list = []
     cdef numpy.ndarray[numpy.float32_t, ndim=2] tmp_arr_f32
     cdef numpy.ndarray[numpy.float64_t, ndim=2] tmp_arr_f64
     cdef numpy.ndarray[numpy.int8_t, ndim=2] tmp_arr_i8
     cdef cr_dtype *cols_pointer = &cols_array[0, 0]
     cdef cr_dtype *rows_pointer = &rows_array[0, 0]
-    cdef int ret = 0
+    cdef int func_result
 
     if in_type == numpy.float32:
         for i in range(num_items):
@@ -223,7 +221,7 @@ def fornav_wrapper(numpy.ndarray[cr_dtype, ndim=2, mode='c'] cols_array,
             input_pointer[i] = &tmp_arr_f32[0, 0]
             tmp_arr_f32 = output_arrays[i]
             output_pointer[i] = &tmp_arr_f32[0, 0]
-        ret = fornav(num_items, swath_cols, swath_rows, grid_cols, grid_rows, cols_pointer, rows_pointer,
+        func_result = fornav(valid_arr, num_items, swath_cols, swath_rows, grid_cols, grid_rows, cols_pointer, rows_pointer,
                      <numpy.float32_t **>input_pointer, <numpy.float32_t **>output_pointer,
                      <numpy.float32_t>input_fill, <numpy.float32_t>output_fill, rows_per_scan,
                      weight_count, weight_min, weight_distance_max, weight_delta_max, weight_sum_min,
@@ -234,7 +232,7 @@ def fornav_wrapper(numpy.ndarray[cr_dtype, ndim=2, mode='c'] cols_array,
             input_pointer[i] = &tmp_arr_f64[0, 0]
             tmp_arr_f64 = output_arrays[i]
             output_pointer[i] = &tmp_arr_f64[0, 0]
-        ret = fornav(num_items, swath_cols, swath_rows, grid_cols, grid_rows, cols_pointer, rows_pointer,
+        func_result = fornav(valid_arr, num_items, swath_cols, swath_rows, grid_cols, grid_rows, cols_pointer, rows_pointer,
                      <numpy.float64_t **>input_pointer, <numpy.float64_t **>output_pointer,
                      <numpy.float64_t>input_fill, <numpy.float64_t>output_fill, rows_per_scan,
                      weight_count, weight_min, weight_distance_max, weight_delta_max, weight_sum_min,
@@ -245,7 +243,7 @@ def fornav_wrapper(numpy.ndarray[cr_dtype, ndim=2, mode='c'] cols_array,
             input_pointer[i] = &tmp_arr_i8[0, 0]
             tmp_arr_i8 = output_arrays[i]
             output_pointer[i] = &tmp_arr_i8[0, 0]
-        ret = fornav(num_items, swath_cols, swath_rows, grid_cols, grid_rows, cols_pointer, rows_pointer,
+        func_result = fornav(valid_arr, num_items, swath_cols, swath_rows, grid_cols, grid_rows, cols_pointer, rows_pointer,
                      <numpy.int8_t **>input_pointer, <numpy.int8_t **>output_pointer,
                      <numpy.int8_t>input_fill, <numpy.int8_t>output_fill, rows_per_scan,
                      weight_count, weight_min, weight_distance_max, weight_delta_max, weight_sum_min,
@@ -253,7 +251,10 @@ def fornav_wrapper(numpy.ndarray[cr_dtype, ndim=2, mode='c'] cols_array,
     else:
         raise ValueError("Unknown input and output data type")
 
+    for i in range(num_items):
+        valid_list.append(valid_arr[i])
+
     free(input_pointer)
     free(output_pointer)
 
-    return ret
+    return valid_list

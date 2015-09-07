@@ -34,7 +34,7 @@ MAIN_PKG_DIR   = polar2grid
 
 # Make sure target names are just the dir name with a suffix
 # See targets for substitution
-ALL_PKG_DIRS   = polar2grid_core polar2grid_viirs polar2grid_modis polar2grid_crefl polar2grid_mirs polar2grid_drrtv polar2grid_iasi $(MAIN_PKG_DIR)
+ALL_PKG_DIRS   = polar2grid_core polar2grid_viirs polar2grid_modis polar2grid_crefl polar2grid_mirs polar2grid_drrtv polar2grid_avhrr polar2grid_acspo polar2grid_iasi $(MAIN_PKG_DIR)
 ALL_PKG_INSTALL  = $(ALL_PKG_DIRS:=_install)
 ALL_PKG_SDIST  = $(ALL_PKG_DIRS:=_sdist)
 ALL_PKG_DEV    = $(ALL_PKG_DIRS:=_dev)
@@ -88,8 +88,8 @@ update_doc: build_doc_html
 	cd $(MAIN_PKG_DIR)/doc/build/html; \
 	echo $(FN); \
 	tar -czf $(FN) *; \
-	scp $(FN) birch:/tmp/; \
-	ssh birch "cd '$(DOC_DIR)'; rm -rf *; tar -xmzf /tmp/$(FN)"
+	scp $(FN) birch.ssec.wisc.edu:/tmp/; \
+	ssh birch.ssec.wisc.edu "cd '$(DOC_DIR)'; rm -rf *; tar -xmzf /tmp/$(FN)"
 
 ### Clean up what we've done ###
 clean_sdist:

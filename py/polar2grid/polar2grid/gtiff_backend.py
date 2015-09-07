@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
-# Copyright (C) 2014 Space Science and Engineering Center (SSEC),
+# Copyright (C) 2012-2015 Space Science and Engineering Center (SSEC),
 # University of Wisconsin-Madison.
 #
 # This program is free software: you can redistribute it and/or modify
@@ -27,11 +27,11 @@
 # 1225 West Dayton Street
 # Madison, WI  53706
 # david.hoese@ssec.wisc.edu
-"""polar2grid backend to take polar-orbitting satellite data arrays
-and place it into a geotiff.
+"""The Geotiff backend puts gridded image data into a standard geotiff file.  It
+uses the GDAL python API to create the geotiff files. It can handle any grid that
+can be described by PROJ.4 and understand by Geotiff.
 
 :author:       David Hoese (davidh)
-:contact:      david.hoese@ssec.wisc.edu
 :organization: Space Science and Engineering Center (SSEC)
 :copyright:    Copyright (c) 2014 University of Wisconsin SSEC. All rights reserved.
 :date:         Nov 2014
@@ -56,7 +56,7 @@ LOG = logging.getLogger(__name__)
 
 gtiff_driver = gdal.GetDriverByName("GTIFF")
 
-DEFAULT_OUTPUT_PATTERN = "%(satellite)s_%(instrument)s_%(product_name)s_%(begin_time)s_%(grid_name)s.tif"
+DEFAULT_OUTPUT_PATTERN = "{satellite}_{instrument}_{product_name}_{begin_time}_{grid_name}.tif"
 
 
 def _proj4_to_srs(proj4_str):
@@ -183,9 +183,9 @@ class Backend(roles.BackendRole):
         grid_def = gridded_product["grid_definition"]
         if not output_pattern:
             output_pattern = DEFAULT_OUTPUT_PATTERN
-        if "%" in output_pattern:
+        if "{" in output_pattern:
             # format the filename
-            of_kwargs = gridded_product.copy()
+            of_kwargs = gridded_product.copy(as_dict=True)
             of_kwargs["data_type"] = data_type
             output_filename = self.create_output_filename(output_pattern,
                                                           grid_name=grid_def["grid_name"],
@@ -203,7 +203,7 @@ class Backend(roles.BackendRole):
                 LOG.warning("Geotiff file already exists, will overwrite: %s", output_filename)
 
         try:
-            LOG.info("Scaling %s data to fit in geotiff...", gridded_product["product_name"])
+            LOG.debug("Scaling %s data to fit in geotiff...", gridded_product["product_name"])
             data = self.rescaler.rescale_product(gridded_product, data_type,
                                                  inc_by_one=inc_by_one, fill_value=fill_value)
 
@@ -226,7 +226,7 @@ def add_backend_argument_groups(parser):
     group.add_argument('--rescale-configs', nargs="*", dest="rescale_configs",
                        help="alternative rescale configuration files")
     group = parser.add_argument_group(title="Backend Output Creation")
-    group.add_argument("-o", "--output-pattern", default=DEFAULT_OUTPUT_PATTERN,
+    group.add_argument("--output-pattern", default=DEFAULT_OUTPUT_PATTERN,
                        help="output filenaming pattern")
     group.add_argument('--dont-inc', dest="inc_by_one", default=True, action="store_false",
                        help="do not increment data by one (ex. 0-254 -> 1-255 with 0 being fill)")

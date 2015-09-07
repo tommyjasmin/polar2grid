@@ -45,8 +45,9 @@ from polar2grid.core import roles
 import os
 import sys
 import logging
+from ConfigParser import NoSectionError
 
-log = logging.getLogger(__name__)
+LOG = logging.getLogger(__name__)
 
 # Default search directory for NCML files
 script_dir = os.path.split(os.path.realpath(__file__))[0]
@@ -72,10 +73,59 @@ def _rel_to_abs(filename, default_base_path):
     filename = os.path.realpath(filename)
 
     if not os.path.exists(filename):
-        log.error("File '%s' could not be found" % (filename,))
+        LOG.error("File '%s' could not be found" % (filename,))
         raise ValueError("File '%s' could not be found" % (filename,))
 
     return filename
+
+
+class AWIPS2ConfigReader(roles.SimpleINIConfigReader):
+    SECTION_PREFIX = "awips:"
+    SOURCE_SECTION = SECTION_PREFIX + "source"
+    PRODUCT_SECTION_PREFIX = SECTION_PREFIX + "product:"
+    GRID_SECTION_PREFIX = SECTION_PREFIX + "grid:"
+    SAT_SECTION_PREFIX = SECTION_PREFIX + "satellite:"
+
+    def __init__(self, *config_files, **kwargs):
+        super(AWIPS2ConfigReader, self).__init__(*config_files, **kwargs)
+
+    @property
+    def known_grids(self):
+        return [x.split(":")[-1] for x in self.config_parser.sections() if x.startswith(self.GRID_SECTION_PREFIX)]
+
+    def get_filename_format(self):
+        return self.config_parser.get(self.SOURCE_SECTION, "filename_scheme")
+
+    def get_source_name(self):
+        return self.config_parser.get(self.SOURCE_SECTION, "source_name")
+
+    def get_grid_info(self, grid_def):
+        info = {}
+        section = self.GRID_SECTION_PREFIX + grid_def["grid_name"]
+        info["depictor_name"] = self.config_parser.get(section, "depictor_name")
+        for opt in self.config_parser.options(section):
+            LOG.debug("Parsing '%s' from AWIPS configuration file", opt)
+            if opt in ["depictor_name", "projname"]:
+                info[opt] = self.config_parser.get(section, opt)
+            elif opt in ["projindex"]:
+                info[opt] = self.config_parser.getint(section, opt)
+            else:
+                info[opt] = self.config_parser.getfloat(section, opt)
+
+        return info
+
+    def get_product_info(self, product_definition):
+        info = {}
+        product_section = self.PRODUCT_SECTION_PREFIX + product_definition["product_name"]
+        sat_section = self.SAT_SECTION_PREFIX + product_definition["satellite"] + ":" + product_definition["instrument"]
+        info["channel"] = self.config_parser.get(product_section, "channel")
+        try:
+            info["satellite_name"] = self.config_parser.get(sat_section, "satellite_name")
+        except NoSectionError:
+            # default if the configuration file isn't set
+            info["satellite_name"] = product_definition["instrument"].upper()
+        info["source_name"] = self.get_source_name()
+        return info
 
 
 class AWIPSConfigReader(roles.INIConfigReader):
@@ -99,7 +149,7 @@ class AWIPSConfigReader(roles.INIConfigReader):
 
     def __init__(self, *config_files, **kwargs):
         kwargs["section_prefix"] = kwargs.get("section_prefix", "awips:")
-        log.info("Loading AWIPS configuration files:\n\t%s", "\n\t".join(config_files))
+        LOG.debug("Loading AWIPS configuration files:\n\t%s", "\n\t".join(config_files))
         super(AWIPSConfigReader, self).__init__(*config_files, **kwargs)
 
     @property
@@ -108,7 +158,7 @@ class AWIPSConfigReader(roles.INIConfigReader):
         return list(set(self.config_parser.get(section_name, "grid_name") for section_name in sections))
 
     def get_product_options(self, gridded_product):
-        all_meta = gridded_product["grid_definition"].copy()
+        all_meta = gridded_product["grid_definition"].copy(as_dict=True)
         all_meta.update(**gridded_product)
         kwargs = dict((k, all_meta.get(k, None)) for k in self.id_fields)
         try:
@@ -116,8 +166,8 @@ class AWIPSConfigReader(roles.INIConfigReader):
             awips_info = dict((k, awips_info[k]) for k in self.info_fields)
             awips_info["ncml_template"] = _rel_to_abs(awips_info["ncml_template"], NCML_DIR)
         except StandardError:
-            log.error("Could not find an AWIPS configuration section for '%s'" % (all_meta["product_name"],))
-            log.debug("Configuration Error: ", exc_info=True)
+            LOG.error("Could not find an AWIPS configuration section for '%s'" % (all_meta["product_name"],))
+            LOG.debug("Configuration Error: ", exc_info=True)
             raise RuntimeError("Could not find an AWIPS configuration section for '%s'" % (all_meta["product_name"],))
         return awips_info
 

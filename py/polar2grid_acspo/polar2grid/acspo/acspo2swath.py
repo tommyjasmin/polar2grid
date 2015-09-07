@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
-# Copyright (C) 2014 Space Science and Engineering Center (SSEC),
+# Copyright (C) 2012-2015 Space Science and Engineering Center (SSEC),
 # University of Wisconsin-Madison.
 #
 # This program is free software: you can redistribute it and/or modify
@@ -27,13 +27,22 @@
 # 1225 West Dayton Street
 # Madison, WI  53706
 # david.hoese@ssec.wisc.edu
-"""Polar2Grid frontend for extracting data and metadata from files processed by the
-Advanced Clear-Sky Processor for Oceans (ACSPO) system.
+"""The ACSPO frontend is for reading files created by the Advanced Clear-Sky Processor for Oceans (ACSPO) system.
+The frontend is contained in the `polar2grid.acspo` python package. The ACSPO system typically produces NetCDF4
+files. The frontend can be specified with the ``p2g_glue`` command using the ``acspo`` frontend name.
+The ACSPO frontend provides the following products:
+
+    +--------------------+--------------------------------------------+
+    | Product Name       | Description                                |
+    +====================+============================================+
+    | sst                | Sea Surface Temperature                    |
+    +--------------------+--------------------------------------------+
+
+|
 
 :author:       David Hoese (davidh)
-:contact:      david.hoese@ssec.wisc.edu
 :organization: Space Science and Engineering Center (SSEC)
-:copyright:    Copyright (c) 2014 University of Wisconsin SSEC. All rights reserved.
+:copyright:    Copyright (c) 2012-2015 University of Wisconsin SSEC. All rights reserved.
 :date:         Nov 2014
 :license:      GNU GPLv3
 
@@ -56,9 +65,9 @@ LOG = logging.getLogger(__name__)
 # File types (only one for now)
 FT_BASIC = "ACSPO_BASIC"  # need more?
 # File variables
-SST_VAR = "sea_surface_temperature"
-LAT_VAR = "latitude"
-LON_VAR = "longitude"
+SST_VAR = "sst_var"
+LAT_VAR = "latitude_var"
+LON_VAR = "longitude_var"
 
 
 class ProductDefinition(object):
@@ -83,9 +92,9 @@ class ProductDict(dict):
         pd = self.base_class(*args, **kwargs)
         self[pd.name] = pd
 
-PRODUCT_SST = "acspo_sst"
-PRODUCT_LATITUDE = "acspo_latitude"
-PRODUCT_LONGITUDE = "acspo_longitude"
+PRODUCT_SST = "sst"
+PRODUCT_LATITUDE = "latitude"
+PRODUCT_LONGITUDE = "longitude"
 
 PRODUCTS = ProductDict(base_class=ProductDefinition)
 # FUTURE: Add a "geoproduct_pair" field and have a second geoproduct list for the pairs
@@ -103,9 +112,9 @@ GEO_PAIRS = (
 
 
 class FileReader(object):
-    """Basic MIRS file reader.
+    """Basic ACSPO file reader.
 
-    If there are alternate formats/structures for MIRS files then new classes should be made.
+    If there are alternate formats/structures for ACSPO files then new classes should be made.
     """
     FILE_TYPE = FT_BASIC
 
@@ -223,9 +232,9 @@ class FileReader(object):
 
     def _compare(self, other, method):
         try:
-            return method(self.begin_time, other.start_time)
+            return method(self.begin_time, other.end_time)
         except AttributeError:
-            raise NotImplemented
+            raise NotImplementedError("Can't compare %r and %r" % (self, other))
 
     def __lt__(self, other):
         return self._compare(other, lambda s, o: s < o)
@@ -290,7 +299,7 @@ class MultiReader(object):
         :param item: Variable name to retrieve
         :param filename: Filename filename if the file should follow traditional FBF naming conventions
         """
-        LOG.info("Writing binary data for %s to file %s", item, filename)
+        LOG.debug("Writing binary data for %s to file %s", item, filename)
         try:
             with open(filename, "w") as file_obj:
                 file_appender = FileAppender(file_obj, dtype)
@@ -349,12 +358,12 @@ def get_file_type(filepath):
         if file_class.handles_file(nc_obj):
             return file_kind
 
-    LOG.info("File doesn't match any known file types: %s", filepath)
+    LOG.debug("File doesn't match any known file types: %s", filepath)
     return None
 
 
 class Frontend(roles.FrontendRole):
-    """Polar2Grid Frontend object for handling MIRS files.
+    """Polar2Grid Frontend object for handling ACSPO files.
     """
     def __init__(self, search_paths=None,
                  overwrite_existing=False, keep_intermediate=False, exit_on_error=False, **kwargs):
@@ -363,7 +372,7 @@ class Frontend(roles.FrontendRole):
         self.keep_intermediate = keep_intermediate
         self.exit_on_error = exit_on_error
         if not search_paths:
-            LOG.info("No files or paths provided as input, will search the current directory...")
+            LOG.debug("No files or paths provided as input, will search the current directory...")
             search_paths = ['.']
 
         self._load_files(search_paths)
@@ -416,7 +425,7 @@ class Frontend(roles.FrontendRole):
                     LOG.debug("Recognize file %s as file type %s", p, file_type)
                     yield (file_type, os.path.realpath(p))
                 else:
-                    LOG.error("File is not a valid MIRS file: %s", p)
+                    LOG.error("File is not a valid ACSPO file: %s", p)
             else:
                 LOG.error("File or directory does not exist: %s", p)
 
@@ -504,7 +513,7 @@ class Frontend(roles.FrontendRole):
 
     def create_scene(self, products=None, nprocs=1, **kwargs):
         if nprocs != 1:
-            raise NotImplementedError("The MIRS frontend does not support multiple processes yet")
+            raise NotImplementedError("The ACSPO frontend does not support multiple processes yet")
         if products is None:
             products = self.available_product_names
         orig_products = set(products)
@@ -584,6 +593,9 @@ def add_frontend_argument_groups(parser):
 
     :returns: list of group titles added
     """
+    # FIXME: This may not be true for all instruments handled by ACSPO. Proper fix is to have remapping controlled by configuration files.
+    parser.set_defaults(fornav_D=40, fornav_d=2)
+
     group_title = "Frontend Initialization"
     group = parser.add_argument_group(title=group_title, description="swath extraction initialization options")
     group.add_argument("--list-products", dest="list_products", action="store_true",

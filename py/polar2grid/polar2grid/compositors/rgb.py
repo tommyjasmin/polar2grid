@@ -27,10 +27,60 @@
 #     1225 West Dayton Street
 #     Madison, WI  53706
 #     david.hoese@ssec.wisc.edu
-"""Common RGB compositors.
+"""
+RGB Compositors
+---------------
+
+The following are common compositors that create RGB images.
+
+True Color
+^^^^^^^^^^
+
+The True Color Compositor is intended for corrected reflectance data from the CREFL (crefl) frontend.
+By default it is configured to work with the crefl products, but may be customized with a compositor configuration
+file. The True Color Compositor expects a red, green, and blue product that are pan sharpened using an
+additional high-resolution red product. This compositor works for VIIRS and MODIS corrected reflectance
+products and produces a new product called "true_color".
+
+False Color
+^^^^^^^^^^^
+
+The False Color Compositor is intended for corrected reflectance data from the CREFL (crefl) frontend.
+It operates similarly to the True Color Compositor described above, but with different bands to use
+by default. It expects a red, green, and blue product that are then pan sharpened using an additional
+high-resolution blue product. This compositor works for VIIRS and MODIS corrected reflectance products
+and produces a new product called "false_color".
+
+RGB
+^^^
+
+The RGB Compositor is a generic compositor for creating RGB products. It should be configured in a custom
+configuration file. The following steps will walk you through creating a custom RGB product and using it
+with the a software bundle glue script.
+
+1. Decide on products to use in the RGB. This example uses ``m05``, ``m07``, and ``m15`` from the VIIRS frontend
+   and will create a geotiff.
+2. Create a "my_composites.conf" file with the following contents::
+
+    [compositor:my_rgb]
+    composite_name=my_rgb_name
+    composite_products=m05,m07,m15
+
+3. Run the following command::
+
+    viirs2gtiff.sh my_rgb --compositor-configs my_composites.conf -f /path/to/files -p m05 m07 m15
+
+.. note::
+
+    The "-p m05 m07 m15" is optional since those products are created by default, but since no other products are needed we request only these 3.
+
+4. The command above will create a file named "npp_viirs_my_rgb_name_20120225_180540_wgs84_fit.tif" by default.
+   The default scaling is linear with dynamic limits per band. To create nicer looking images a custom rescaling
+   configuration would be required.
+
+|
 
 :author:       David Hoese (davidh)
-:contact:      david.hoese@ssec.wisc.edu
 :organization: Space Science and Engineering Center (SSEC)
 :copyright:    Copyright (c) 2014 University of Wisconsin SSEC. All rights reserved.
 :date:         Dec 2014
@@ -47,6 +97,69 @@ import sys
 import logging
 
 LOG = logging.getLogger(__name__)
+
+
+class CreflRGBSharpenCompositor(roles.CompositorRole):
+    """Compositor filter that sharpens all other products based on the ratio of a high resolution product to a low
+    resolution product.
+    """
+
+    def __init__(self, lores_products, hires_products, **kwargs):
+        self.share_mask = kwargs.get("share_mask", True)
+        self.remove_lores = kwargs.get("remove_lores", True)
+        self.lores_products = lores_products if not isinstance(lores_products, (str, unicode)) else lores_products.split(",")
+        self.hires_products = lores_products if not isinstance(hires_products, (str, unicode)) else hires_products.split(",")
+
+    def shared_mask(self, gridded_scene, product_names, axis=0):
+        return numpy.any([gridded_scene[pname].get_data_mask() for pname in product_names], axis=axis)
+
+    def _get_first_available_product(self, gridded_scene, desired_products):
+        LOG.debug("Checking if any of the following are in the scene: %s", desired_products)
+        for pn in desired_products:
+            if pn in gridded_scene:
+                LOG.debug("Found '%s' in the scene", pn)
+                return pn
+
+        return None
+
+    def modify_scene(self, gridded_scene, fill_value=None, **kwargs):
+        lores_product_name = self._get_first_available_product(gridded_scene, self.lores_products)
+        hires_product_name = self._get_first_available_product(gridded_scene, self.hires_products)
+        other_product_names = list(set(gridded_scene.keys()) - {lores_product_name, hires_product_name})
+
+        if fill_value is None:
+            fill_value = gridded_scene[hires_product_name]["fill_value"]
+
+        try:
+            lores_data = gridded_scene[lores_product_name].get_data_array(mode="r+")
+            hires_data = gridded_scene[hires_product_name].get_data_array(mode="r+")
+            ratio = hires_data / lores_data
+
+            if self.share_mask:
+                LOG.debug("Sharing missing value mask between bands and using fill value %r", fill_value)
+                shared_mask = self.shared_mask(gridded_scene, gridded_scene.keys())
+                # mask the hires product then update the product
+                lores_data[shared_mask] = fill_value
+                hires_data[shared_mask] = fill_value
+            else:
+                shared_mask = None
+
+            # For each of the other products mask them accordingly
+            for pname in other_product_names:
+                # opening in this mode will do inplace modifications (flushed on object deletion)
+                other_data = gridded_scene[pname].get_data_array(mode="r+")
+                other_data *= ratio
+                if shared_mask is not None:
+                    other_data[shared_mask] = fill_value
+                gridded_scene[pname]["sharpened"] = True
+
+            if self.remove_lores:
+                del gridded_scene[lores_product_name]
+        except StandardError:
+            LOG.error("Could not sharpen products")
+            raise
+
+        return gridded_scene
 
 
 class RGBCompositor(roles.CompositorRole):
@@ -89,8 +202,8 @@ class RGBCompositor(roles.CompositorRole):
 
             comp_data.tofile(fn)
             base_product = gridded_scene[self.composite_products[0]]
-            base_product["data_kind"] = self.composite_data_kind
-            gridded_scene[self.composite_name] = self._create_gridded_product(self.composite_name, fn, base_product=base_product)
+            gridded_scene[self.composite_name] = self._create_gridded_product(self.composite_name, fn, base_product=base_product,
+                                                                              data_kind=self.composite_data_kind)
         except StandardError:
             LOG.error("Could not create composite product with name '%s'", self.composite_name)
             if os.path.isfile(fn):
@@ -181,9 +294,9 @@ class TrueColorCompositor(RGBCompositor):
             LOG.info("Saving true color image to filename '%s'", fn)
             comp_data.tofile(fn)
             base_product = gridded_scene[all_products[0]]
-            base_product["data_kind"] = self.composite_data_kind
             gridded_scene[self.composite_name] = self._create_gridded_product(self.composite_name, fn,
-                                                                              base_product=base_product)
+                                                                              base_product=base_product,
+                                                                              data_kind=self.composite_data_kind)
         except StandardError:
             LOG.error("Could not create composite product with name '%s'", self.composite_name)
             if os.path.isfile(fn):
@@ -197,13 +310,13 @@ class FalseColorCompositor(TrueColorCompositor):
     # see TrueColorCompositor.ratio_sharpen()
     default_compare_index = 2
 
-    def __init__(self, fc_red_products, fc_green_products, fc_blue_products, fc_hires_products, **kwargs):
+    def __init__(self, red_products, green_products, blue_products, hires_products, **kwargs):
         kwargs.setdefault("composite_name", "false_color")
         kwargs.setdefault("composite_data_kind", "crefl_false_color")
-        super(FalseColorCompositor, self).__init__(fc_red_products,
-                                                   fc_green_products,
-                                                   fc_blue_products,
-                                                   fc_hires_products,
+        super(FalseColorCompositor, self).__init__(red_products,
+                                                   green_products,
+                                                   blue_products,
+                                                   hires_products,
                                                    **kwargs)
 
     def modify_scene(self, gridded_scene, fill_value=None, **kwargs):
@@ -242,9 +355,9 @@ class FalseColorCompositor(TrueColorCompositor):
             LOG.info("Saving false color image to filename '%s'", fn)
             comp_data.tofile(fn)
             base_product = gridded_scene[all_products[0]]
-            base_product["data_kind"] = self.composite_data_kind
             gridded_scene[self.composite_name] = self._create_gridded_product(self.composite_name, fn,
-                                                                              base_product=base_product)
+                                                                              base_product=base_product,
+                                                                              data_kind=self.composite_data_kind)
         except StandardError:
             LOG.error("Could not create composite product with name '%s'", self.composite_name)
             if os.path.isfile(fn):

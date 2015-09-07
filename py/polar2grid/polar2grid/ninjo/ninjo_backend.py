@@ -1,43 +1,58 @@
 #!/usr/bin/env python
 # encoding: utf-8
-"""Module to provide the NinJo backend to a polar2grid chain.  This module
-takes reprojected image data and other parameters required by NinJo and
-places them correctly in to the modified geotiff format accepted by NinJo.
+# Copyright (C) 2012-2015 Space Science and Engineering Center (SSEC),
+# University of Wisconsin-Madison.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# This file is part of the polar2grid software package. Polar2grid takes
+# satellite observation data, remaps it, and writes it to a file format for
+#     input into another program.
+# Documentation: http://www.ssec.wisc.edu/software/polar2grid/
+#
+# Written by David Hoese    October 2014
+# University of Wisconsin-Madison
+# Space Science and Engineering Center
+# 1225 West Dayton Street
+# Madison, WI  53706
+# david.hoese@ssec.wisc.edu
+"""The NinJo backend is used to create NinJo compatible TIFF files, also
+known as NinJoTIFFs. The NinJo Workstation Project is a meteorological
+workstation system for
+viewing various weather images. NinJo in some ways is like AWIPS is to
+the United States Nation Weather Service (NWS), but is used by various
+countries around the world.
+
+The NinJo backend for polar2grid was specifically developed to assist the
+"Deutscher Wetterdienst" (DWD) in displaying NPP VIIRS data in NinJo.
+This partnership between the DWD and |ssec| lead to a fairly specialized
+system that creates NinJo compatible TIFF images. NinJo allows for
+multiple "readers" or plugins to its system to allow for various formats
+to be read. The polar2grid backend is specifically for the TIFF reader
+used by the DWD. These files are different
+from regular TIFF images in that they have a number of tags for describing
+the data and the location of that data to NinJo.
+
+The NinJo backend must be configured to support a specific grid and is
+currently only configured for the DWD Germany grid (dwd_germany) and the
+Alaska (203) grid.
 
 :author:       David Hoese (davidh)
-:contact:      david.hoese@ssec.wisc.edu
 :organization: Space Science and Engineering Center (SSEC)
-:copyright:    Copyright (c) 2013 University of Wisconsin SSEC. All rights reserved.
+:copyright:    Copyright (c) 2012-2015 University of Wisconsin SSEC. All rights reserved.
 :date:         Jan 2013
 :license:      GNU GPLv3
-
-Copyright (C) 2013 Space Science and Engineering Center (SSEC),
- University of Wisconsin-Madison.
-
-   This program is free software: you can redistribute it and/or modify
-   it under the terms of the GNU General Public License as published by
-   the Free Software Foundation, either version 3 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU General Public License for more details.
-
-   You should have received a copy of the GNU General Public License
-   along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-This file is part of the polar2grid software package. Polar2grid takes
-satellite observation data, remaps it, and writes it to a file format for
-input into another program.
-Documentation: http://www.ssec.wisc.edu/software/polar2grid/
-
-    Written by David Hoese    January 2013
-    University of Wisconsin-Madison 
-    Space Science and Engineering Center
-    1225 West Dayton Street
-    Madison, WI  53706
-    david.hoese@ssec.wisc.edu
 
 """
 __docformat__ = "restructuredtext en"
@@ -59,7 +74,7 @@ LOG = logging.getLogger(__name__)
 
 DEFAULT_NINJO_RCONFIG = "polar2grid.ninjo:rescale_ninjo.ini"
 DEFAULT_NINJO_CONFIG = "ninjo_backend.ini"
-DEFAULT_OUTPUT_PATTERN = "%(satellite)s_%(instrument)s_%(product_name)s_%(begin_time)s_%(grid_name)s.tif"
+DEFAULT_OUTPUT_PATTERN = "{satellite}_{instrument}_{product_name}_{begin_time}_{grid_name}.tif"
 
 ninjo_tags = []
 ninjo_tags.append(TIFFFieldInfo(33922, 6, 6, TIFFDataType.TIFF_DOUBLE, FIELD_CUSTOM, True, False, "ModelTiePoint"))
@@ -277,7 +292,7 @@ def create_ninjo_tiff(image_data, output_fn, **kwargs):
         KeyError :
             if required keyword is not provided
     """
-    LOG.info("Creating output file '%s'" % (output_fn,))
+    LOG.debug("Creating NinJo TIFF file '%s'" % (output_fn,))
     out_tiff = TIFF.open(output_fn, "w")
 
     image_data = clip_to_data_type(image_data, DTYPE_UINT8)
@@ -361,7 +376,7 @@ def create_ninjo_tiff(image_data, output_fn, **kwargs):
     image_epoch = calendar.timegm(image_dt.timetuple())
 
     def _write_oneres(image_data, pixel_xres, pixel_yres, subfile=False):
-        LOG.info("Writing tag data for a resolution of the output file '%s'" % (output_fn,))
+        LOG.debug("Writing tag data for a resolution of the output file '%s'" % (output_fn,))
 
         ### Write Tag Data ###
         # Built ins
@@ -472,9 +487,21 @@ class NinjoBandConfigReader(roles.INIConfigReader):
     )
 
     def __init__(self, *args, **kwargs):
-        kwargs.setdefault("int_kwargs", ("satellite_id", "band_id"))
+        kwargs.setdefault("int_kwargs", ("band_id",))
         kwargs.setdefault("section_prefix", "ninjo_product:")
         super(NinjoBandConfigReader, self).__init__(*args, **kwargs)
+
+
+class NinJoSatConfigReader(roles.SimpleINIConfigReader):
+    def __init__(self, *config_files, **kwargs):
+        self.section_prefix = kwargs.pop("section_prefix", "ninjo_satellite:")
+        super(NinJoSatConfigReader, self).__init__(*config_files, **kwargs)
+
+    def get_satellite_id(self, product_info):
+        section_name = self.section_prefix + product_info["satellite"]
+        if self.config_parser.has_section(section_name):
+            return self.config_parser.getint(section_name, "satellite_id")
+        raise RuntimeError("No satellite section for the provided product with satellite: {}".format(product_info["satellite"]))
 
 
 class Backend(roles.BackendRole):
@@ -484,6 +511,7 @@ class Backend(roles.BackendRole):
         self.rescaler = Rescaler(*self.rescale_configs)
         self.band_config_reader = NinjoBandConfigReader(*self.backend_configs)
         self.grid_config_reader = NinjoGridConfigReader(*self.backend_configs)
+        self.sat_config_reader = NinJoSatConfigReader(*self.backend_configs)
         super(Backend, self).__init__(**kwargs)
 
     @property
@@ -506,12 +534,13 @@ class Backend(roles.BackendRole):
             data_kind=gridded_product["data_kind"],
             allow_default=False,
         )
+        band_config_info["satellite_id"] = self.sat_config_reader.get_satellite_id(gridded_product)
 
         if not output_pattern:
             output_pattern = DEFAULT_OUTPUT_PATTERN
-        if "%" in output_pattern:
+        if "{" in output_pattern:
             # format the filename
-            of_kwargs = gridded_product.copy()
+            of_kwargs = gridded_product.copy(as_dict=True)
             of_kwargs["data_type"] = dtype_to_str(data_type)
             output_filename = self.create_output_filename(output_pattern,
                                                           grid_name=grid_def["grid_name"],
@@ -529,7 +558,7 @@ class Backend(roles.BackendRole):
                 LOG.warning("NinJo TIFF file already exists, will overwrite: %s", output_filename)
 
         try:
-            LOG.info("Extracting additional information from grid projection")
+            LOG.debug("Extracting additional information from grid projection")
             map_origin_lon, map_origin_lat = grid_def.lonlat_upperleft
             proj_dict = grid_def.proj4_dict
             equ_radius = proj_dict["a"]
@@ -537,7 +566,7 @@ class Backend(roles.BackendRole):
             central_meridian = proj_dict.get("lon_0", None)
             ref_lat1 = proj_dict.get("lat_ts", None)
 
-            LOG.info("Scaling %s data to fit in ninjotiff...", gridded_product["product_name"])
+            LOG.debug("Scaling %s data to fit in ninjotiff...", gridded_product["product_name"])
             data = self.rescaler.rescale_product(gridded_product, data_type,
                                                  inc_by_one=inc_by_one, fill_value=fill_value)
 
@@ -812,7 +841,7 @@ def add_backend_argument_groups(parser):
     group.add_argument('--backend-configs', nargs="*", dest="rescale_configs",
                        help="alternative backend configuration files")
     group = parser.add_argument_group(title="Backend Output Creation")
-    group.add_argument("-o", "--output-pattern", default=DEFAULT_OUTPUT_PATTERN,
+    group.add_argument("--output-pattern", default=DEFAULT_OUTPUT_PATTERN,
                        help="output filenaming pattern")
     # group.add_argument('--dont-inc', dest="inc_by_one", default=True, action="store_false",
     #                    help="do not increment data by one (ex. 0-254 -> 1-255 with 0 being fill)")

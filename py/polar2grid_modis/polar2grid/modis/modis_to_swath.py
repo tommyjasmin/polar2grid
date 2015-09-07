@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
-# Copyright (C) 2014 Space Science and Engineering Center (SSEC),
+# Copyright (C) 2012-2015 Space Science and Engineering Center (SSEC),
 #  University of Wisconsin-Madison.
 #
 #     This program is free software: you can redistribute it and/or modify
@@ -27,14 +27,138 @@
 #     1225 West Dayton Street
 #     Madison, WI  53706
 #     david.hoese@ssec.wisc.edu
-"""Read one or more contiguous in-order HDF4 MODIS granules
-Write out Swath binary files used by ms2gt tools.
+"""The MODIS Frontend operates on HDF4 Level 1B files from the Moderate Resolution
+Imaging Spectroradiometer (MODIS) instruments on the Aqua and Terra
+satellites. The frontend is designed to work with files created by the IMAPP
+direct broadcast processing system, but may support other types of L1B files. The
+frontend can be specified to the ``p2g_glue`` script by using the frontend name ``modis``.
+It provides the following products:
+
+    +--------------------+--------------------------------------------+
+    | Product Name       | Description                                |
+    +====================+============================================+
+    | vis01              | Visible 1 Band                             |
+    +--------------------+--------------------------------------------+
+    | vis02              | Visible 2 Band                             |
+    +--------------------+--------------------------------------------+
+    | vis03              | Visible 3 Band                             |
+    +--------------------+--------------------------------------------+
+    | vis04              | Visible 4 Band                             |
+    +--------------------+--------------------------------------------+
+    | vis05              | Visible 5 Band                             |
+    +--------------------+--------------------------------------------+
+    | vis06              | Visible 6 Band                             |
+    +--------------------+--------------------------------------------+
+    | vis07              | Visible 7 Band                             |
+    +--------------------+--------------------------------------------+
+    | vis26              | Visible 26 Band                            |
+    +--------------------+--------------------------------------------+
+    | bt20               | Brightness Temperature Band 20             |
+    +--------------------+--------------------------------------------+
+    | bt21               | Brightness Temperature Band 21             |
+    +--------------------+--------------------------------------------+
+    | bt22               | Brightness Temperature Band 22             |
+    +--------------------+--------------------------------------------+
+    | bt23               | Brightness Temperature Band 23             |
+    +--------------------+--------------------------------------------+
+    | bt24               | Brightness Temperature Band 24             |
+    +--------------------+--------------------------------------------+
+    | bt25               | Brightness Temperature Band 25             |
+    +--------------------+--------------------------------------------+
+    | bt27               | Brightness Temperature Band 27             |
+    +--------------------+--------------------------------------------+
+    | bt28               | Brightness Temperature Band 28             |
+    +--------------------+--------------------------------------------+
+    | bt29               | Brightness Temperature Band 29             |
+    +--------------------+--------------------------------------------+
+    | bt30               | Brightness Temperature Band 30             |
+    +--------------------+--------------------------------------------+
+    | bt31               | Brightness Temperature Band 31             |
+    +--------------------+--------------------------------------------+
+    | bt32               | Brightness Temperature Band 32             |
+    +--------------------+--------------------------------------------+
+    | bt33               | Brightness Temperature Band 33             |
+    +--------------------+--------------------------------------------+
+    | bt34               | Brightness Temperature Band 34             |
+    +--------------------+--------------------------------------------+
+    | bt35               | Brightness Temperature Band 35             |
+    +--------------------+--------------------------------------------+
+    | bt36               | Brightness Temperature Band 36             |
+    +--------------------+--------------------------------------------+
+    | ir20               | Radiance Band 20                           |
+    +--------------------+--------------------------------------------+
+    | ir21               | Radiance Band 21                           |
+    +--------------------+--------------------------------------------+
+    | ir22               | Radiance Band 22                           |
+    +--------------------+--------------------------------------------+
+    | ir23               | Radiance Band 23                           |
+    +--------------------+--------------------------------------------+
+    | ir24               | Radiance Band 24                           |
+    +--------------------+--------------------------------------------+
+    | ir25               | Radiance Band 25                           |
+    +--------------------+--------------------------------------------+
+    | ir27               | Radiance Band 27                           |
+    +--------------------+--------------------------------------------+
+    | ir28               | Radiance Band 28                           |
+    +--------------------+--------------------------------------------+
+    | ir29               | Radiance Band 29                           |
+    +--------------------+--------------------------------------------+
+    | ir30               | Radiance Band 30                           |
+    +--------------------+--------------------------------------------+
+    | ir31               | Radiance Band 31                           |
+    +--------------------+--------------------------------------------+
+    | ir32               | Radiance Band 32                           |
+    +--------------------+--------------------------------------------+
+    | ir33               | Radiance Band 33                           |
+    +--------------------+--------------------------------------------+
+    | ir34               | Radiance Band 34                           |
+    +--------------------+--------------------------------------------+
+    | ir35               | Radiance Band 35                           |
+    +--------------------+--------------------------------------------+
+    | ir36               | Radiance Band 36                           |
+    +--------------------+--------------------------------------------+
+    | cloud_mask         | Cloud Mask                                 |
+    +--------------------+--------------------------------------------+
+    | land_sea_mask      | Land Sea Mask                              |
+    +--------------------+--------------------------------------------+
+    | snow_ice_mask      | Snow Ice Mask                              |
+    +--------------------+--------------------------------------------+
+    | sst                | Sea Surface Temperature                    |
+    +--------------------+--------------------------------------------+
+    | lst                | Land Surface Temperature                   |
+    +--------------------+--------------------------------------------+
+    | slst               | Summer Land Surface Temperature            |
+    +--------------------+--------------------------------------------+
+    | ndvi               | Normalized Difference Vegetation Index     |
+    +--------------------+--------------------------------------------+
+    | ist                | Ice Surface Temperature                    |
+    +--------------------+--------------------------------------------+
+    | inversion_strength | Inversion Strength                         |
+    +--------------------+--------------------------------------------+
+    | inversion_depth    | Inversion Depth                            |
+    +--------------------+--------------------------------------------+
+    | ice_concentration  | Ice Concentration                          |
+    +--------------------+--------------------------------------------+
+    | ctt                | Cloud Top Temperature                      |
+    +--------------------+--------------------------------------------+
+    | tpw                | Total Precipitable Water                   |
+    +--------------------+--------------------------------------------+
+    | fog                | Temperature Difference between BT31        |
+    |                    | and BT20                                   |
+    +--------------------+--------------------------------------------+
+
+
+For reflectance/visible products a check is done to make sure that at least
+10% of the swath is day time. Data is considered day time where solar zenith
+angle is less than 90 degrees.
+
+
+|
 
 :author:       David Hoese (davidh)
 :author:       Eva Schiffer (evas)
-:contact:      david.hoese@ssec.wisc.edu
 :organization: Space Science and Engineering Center (SSEC)
-:copyright:    Copyright (c) 2014 University of Wisconsin SSEC. All rights reserved.
+:copyright:    Copyright (c) 2012-2015 University of Wisconsin SSEC. All rights reserved.
 :date:         Dec 2014
 :license:      GNU GPLv3
 
@@ -59,45 +183,77 @@ GEO_PAIRS = GeoPairDict()
 
 ### PRODUCT KEYS ###
 # PRODUCT_VIS01_1000m = "visible_01_1000m"  # if someone wants to have both the 250m and the 1000m version
-PRODUCT_VIS01 = "visible_01"
-PRODUCT_VIS02 = "visible_02"
-PRODUCT_VIS07 = "visible_07"
-PRODUCT_VIS26 = "visible_26"
+PRODUCT_VIS01 = "vis01"
+PRODUCT_VIS02 = "vis02"
+PRODUCT_VIS03 = "vis03"
+PRODUCT_VIS04 = "vis04"
+PRODUCT_VIS05 = "vis05"
+PRODUCT_VIS06 = "vis06"
+PRODUCT_VIS07 = "vis07"
+PRODUCT_VIS26 = "vis26"
 
 # need to be converted to BTs:
-PRODUCT_IR20 = "infrared_20"
-PRODUCT_IR27 = "infrared_27"
-PRODUCT_IR31 = "infrared_31"
-PRODUCT_BT20 = "brightness_temperature_20"
-PRODUCT_BT27 = "brightness_temperature_27"
-PRODUCT_BT31 = "brightness_temperature_31"
+PRODUCT_IR20 = "ir20"
+PRODUCT_IR21 = "ir21"
+PRODUCT_IR22 = "ir22"
+PRODUCT_IR23 = "ir23"
+PRODUCT_IR24 = "ir24"
+PRODUCT_IR25 = "ir25"
+PRODUCT_IR27 = "ir27"
+PRODUCT_IR28 = "ir28"
+PRODUCT_IR29 = "ir29"
+PRODUCT_IR30 = "ir30"
+PRODUCT_IR31 = "ir31"
+PRODUCT_IR32 = "ir32"
+PRODUCT_IR33 = "ir33"
+PRODUCT_IR34 = "ir34"
+PRODUCT_IR35 = "ir35"
+PRODUCT_IR36 = "ir36"
+
+PRODUCT_BT20 = "bt20"
+PRODUCT_BT21 = "bt21"
+PRODUCT_BT22 = "bt22"
+PRODUCT_BT23 = "bt23"
+PRODUCT_BT24 = "bt24"
+PRODUCT_BT25 = "bt25"
+PRODUCT_BT27 = "bt27"
+PRODUCT_BT28 = "bt28"
+PRODUCT_BT29 = "bt29"
+PRODUCT_BT30 = "bt30"
+PRODUCT_BT31 = "bt31"
+PRODUCT_BT32 = "bt32"
+PRODUCT_BT33 = "bt33"
+PRODUCT_BT34 = "bt34"
+PRODUCT_BT35 = "bt35"
+PRODUCT_BT36 = "bt36"
 
 PRODUCT_CMASK = "cloud_mask"
 PRODUCT_LSMASK = "land_sea_mask"
+PRODUCT_SIMASK = "snow_ice_mask"
 PRODUCT_SZA = "solar_zenith_angle"
 
 # Need land mask clearing and cloud clearing
-PRODUCT_SST = "sea_surface_temperature_uncleared"
-PRODUCT_LST = "land_surface_temperature_uncleared"
-PRODUCT_SLST = "summer_land_surface_temperature_uncleared"
+PRODUCT_SST = "sst_uncleared"
+PRODUCT_LST = "lst_uncleared"
+PRODUCT_SLST = "slst_uncleared"
 PRODUCT_NDVI = "ndvi_uncleared"
-PRODUCT_CLEAR_SST = "sea_surface_temperature"
-PRODUCT_CLEAR_LST = "land_surface_temperature"
-PRODUCT_CLEAR_SLST = "summer_land_surface_temperature"
+PRODUCT_CLEAR_SST = "sst"
+PRODUCT_CLEAR_LST = "lst"
+PRODUCT_CLEAR_SLST = "slst"
 PRODUCT_CLEAR_NDVI = "ndvi"
 
-PRODUCT_IST = "ice_surface_temperature"
+PRODUCT_IST = "ist"
 PRODUCT_INV = "inversion_strength"
 PRODUCT_IND = "inversion_depth"
 PRODUCT_ICON = "ice_concentration"
-PRODUCT_CTT = "cloud_top_temperature"
-PRODUCT_TPW = "total_precipitable_water"
+PRODUCT_CTT = "ctt"
+PRODUCT_TPW = "tpw"
 # secondary products
 PRODUCT_FOG = "fog"
 # Adaptive BT Products
-PRODUCT_ADAPTIVE_BT20 = "adaptive_brightness_temperature_20"
-PRODUCT_ADAPTIVE_BT27 = "adaptive_brightness_temperature_27"
-PRODUCT_ADAPTIVE_BT31 = "adaptive_brightness_temperature_31"
+PRODUCT_ADAPTIVE_BT20 = "adaptive_bt20"
+PRODUCT_ADAPTIVE_BT27 = "adaptive_bt27"
+PRODUCT_ADAPTIVE_BT31 = "adaptive_bt31"
 # Geolocation "Products"
 PRODUCT_1000M_LAT = "latitude_1000m"
 PRODUCT_1000M_LON = "longitude_1000m"
@@ -150,14 +306,32 @@ PRODUCTS.add_product(PRODUCT_SZA, PAIR_1000M, "solar_zenith_angle", guidebook.FT
 # if in the future someone needs both the 250M version and the 1000M version add uncomment this line
 # PRODUCTS.add_product(PRODUCT_VIS01_1000M, PAIR_1000M, "reflectance", guidebook.FT_1000M, guidebook.K_VIS01)
 PRODUCTS.add_product(PRODUCT_VIS01, (PAIR_250M, PAIR_1000M), "reflectance", (guidebook.FT_250M, guidebook.FT_1000M), guidebook.K_VIS01, dependencies=(PRODUCT_SZA,))
-PRODUCTS.add_product(PRODUCT_VIS02, PAIR_250M, "reflectance", guidebook.FT_250M, guidebook.K_VIS02, dependencies=(PRODUCT_SZA,))
+PRODUCTS.add_product(PRODUCT_VIS02, (PAIR_250M, PAIR_1000M), "reflectance", (guidebook.FT_250M, guidebook.FT_1000M), guidebook.K_VIS02, dependencies=(PRODUCT_SZA,))
+PRODUCTS.add_product(PRODUCT_VIS03, PAIR_1000M, "reflectance", guidebook.FT_1000M, guidebook.K_VIS03, dependencies=(PRODUCT_SZA,))
+PRODUCTS.add_product(PRODUCT_VIS04, PAIR_1000M, "reflectance", guidebook.FT_1000M, guidebook.K_VIS04, dependencies=(PRODUCT_SZA,))
+PRODUCTS.add_product(PRODUCT_VIS05, PAIR_1000M, "reflectance", guidebook.FT_1000M, guidebook.K_VIS05, dependencies=(PRODUCT_SZA,))
+PRODUCTS.add_product(PRODUCT_VIS06, PAIR_1000M, "reflectance", guidebook.FT_1000M, guidebook.K_VIS06, dependencies=(PRODUCT_SZA,))
 PRODUCTS.add_product(PRODUCT_VIS07, PAIR_1000M, "reflectance", guidebook.FT_1000M, guidebook.K_VIS07, dependencies=(PRODUCT_SZA,))
 PRODUCTS.add_product(PRODUCT_VIS26, PAIR_1000M, "reflectance", guidebook.FT_1000M, guidebook.K_VIS26, dependencies=(PRODUCT_SZA,))
 PRODUCTS.add_product(PRODUCT_IR20, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR20)
+PRODUCTS.add_product(PRODUCT_IR21, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR21)
+PRODUCTS.add_product(PRODUCT_IR22, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR22)
+PRODUCTS.add_product(PRODUCT_IR23, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR23)
+PRODUCTS.add_product(PRODUCT_IR24, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR24)
+PRODUCTS.add_product(PRODUCT_IR25, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR25)
 PRODUCTS.add_product(PRODUCT_IR27, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR27)
+PRODUCTS.add_product(PRODUCT_IR28, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR28)
+PRODUCTS.add_product(PRODUCT_IR29, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR29)
+PRODUCTS.add_product(PRODUCT_IR30, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR30)
 PRODUCTS.add_product(PRODUCT_IR31, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR31)
+PRODUCTS.add_product(PRODUCT_IR32, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR32)
+PRODUCTS.add_product(PRODUCT_IR33, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR33)
+PRODUCTS.add_product(PRODUCT_IR34, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR34)
+PRODUCTS.add_product(PRODUCT_IR35, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR35)
+PRODUCTS.add_product(PRODUCT_IR36, PAIR_1000M, "radiance", guidebook.FT_1000M, guidebook.K_IR36)
 PRODUCTS.add_product(PRODUCT_CMASK, PAIR_1000M, "category", (guidebook.FT_MASK_BYTE1, guidebook.FT_MOD35), guidebook.K_CMASK)
 PRODUCTS.add_product(PRODUCT_LSMASK, PAIR_1000M, "category", guidebook.FT_MASK_BYTE1, guidebook.K_LSMASK)
+PRODUCTS.add_product(PRODUCT_SIMASK, PAIR_1000M, "category", guidebook.FT_MASK_BYTE1, guidebook.K_SIMASK)
 PRODUCTS.add_product(PRODUCT_SST, PAIR_1000M, "sea_surface_temperature", guidebook.FT_MOD28, guidebook.K_SST)
 PRODUCTS.add_product(PRODUCT_LST, PAIR_1000M, "land_surface_temperature", guidebook.FT_MODLST, guidebook.K_LST)
 PRODUCTS.add_product(PRODUCT_NDVI, PAIR_1000M, "ndvi", guidebook.FT_NDVI_1000M, guidebook.K_NDVI)
@@ -171,11 +345,24 @@ PRODUCTS.add_product(PRODUCT_TPW, PAIR_MOD07, "total_precipitable_water", guideb
 PRODUCTS.add_product(PRODUCT_SLST, PAIR_1000M, "summer_land_surface_temperature", dependencies=(PRODUCT_LST,))
 # radiance -> brightness temperature
 PRODUCTS.add_product(PRODUCT_BT20, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR20,))
+PRODUCTS.add_product(PRODUCT_BT21, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR21,))
+PRODUCTS.add_product(PRODUCT_BT22, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR22,))
+PRODUCTS.add_product(PRODUCT_BT23, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR23,))
+PRODUCTS.add_product(PRODUCT_BT24, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR24,))
+PRODUCTS.add_product(PRODUCT_BT25, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR25,))
 PRODUCTS.add_product(PRODUCT_BT27, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR27,))
+PRODUCTS.add_product(PRODUCT_BT28, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR28,))
+PRODUCTS.add_product(PRODUCT_BT29, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR29,))
+PRODUCTS.add_product(PRODUCT_BT30, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR30,))
 PRODUCTS.add_product(PRODUCT_BT31, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR31,))
+PRODUCTS.add_product(PRODUCT_BT32, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR32,))
+PRODUCTS.add_product(PRODUCT_BT33, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR33,))
+PRODUCTS.add_product(PRODUCT_BT34, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR34,))
+PRODUCTS.add_product(PRODUCT_BT35, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR35,))
+PRODUCTS.add_product(PRODUCT_BT36, PAIR_1000M, "brightness_temperature", dependencies=(PRODUCT_IR36,))
 PRODUCTS.add_product(PRODUCT_FOG, PAIR_1000M, "temperature_difference", dependencies=(PRODUCT_BT31, PRODUCT_BT20, PRODUCT_SZA))
 # cloud clear and land/sea mask cleared
-PRODUCTS.add_product(PRODUCT_CLEAR_SST, PAIR_1000M, "sea_surface_temperature", dependencies=(PRODUCT_SST, PRODUCT_CMASK, PRODUCT_LSMASK))
+PRODUCTS.add_product(PRODUCT_CLEAR_SST, PAIR_1000M, "sea_surface_temperature", dependencies=(PRODUCT_SST, PRODUCT_CMASK, PRODUCT_LSMASK, PRODUCT_SIMASK))
 PRODUCTS.add_product(PRODUCT_CLEAR_LST, PAIR_1000M, "land_surface_temperature", dependencies=(PRODUCT_LST, PRODUCT_CMASK, PRODUCT_LSMASK))
 PRODUCTS.add_product(PRODUCT_CLEAR_SLST, PAIR_1000M, "summer_land_surface_temperature", dependencies=(PRODUCT_CLEAR_LST,))
 PRODUCTS.add_product(PRODUCT_CLEAR_NDVI, PAIR_1000M, "ndvi", dependencies=(PRODUCT_NDVI, PRODUCT_CMASK, PRODUCT_LSMASK))
@@ -183,6 +370,72 @@ PRODUCTS.add_product(PRODUCT_CLEAR_NDVI, PAIR_1000M, "ndvi", dependencies=(PRODU
 PRODUCTS.add_product(PRODUCT_ADAPTIVE_BT20, PAIR_1000M, "equalized_brightness_temperature", dependencies=(PRODUCT_BT20,))
 PRODUCTS.add_product(PRODUCT_ADAPTIVE_BT27, PAIR_1000M, "equalized_brightness_temperature", dependencies=(PRODUCT_VIS02,))
 PRODUCTS.add_product(PRODUCT_ADAPTIVE_BT31, PAIR_1000M, "equalized_brightness_temperature", dependencies=(PRODUCT_VIS07,))
+
+
+VIS_PRODUCTS = [
+    PRODUCT_VIS01,
+    PRODUCT_VIS02,
+    PRODUCT_VIS03,
+    PRODUCT_VIS04,
+    PRODUCT_VIS05,
+    PRODUCT_VIS06,
+    PRODUCT_VIS07,
+    PRODUCT_VIS26,
+]
+RAD_PRODUCTS = [
+    PRODUCT_IR20,
+    PRODUCT_IR21,
+    PRODUCT_IR22,
+    PRODUCT_IR23,
+    PRODUCT_IR24,
+    PRODUCT_IR25,
+    PRODUCT_IR27,
+    PRODUCT_IR28,
+    PRODUCT_IR29,
+    PRODUCT_IR30,
+    PRODUCT_IR31,
+    PRODUCT_IR32,
+    PRODUCT_IR33,
+    PRODUCT_IR34,
+    PRODUCT_IR35,
+    PRODUCT_IR36,
+]
+BT_PRODUCTS = [
+    PRODUCT_BT20,
+    PRODUCT_BT21,
+    PRODUCT_BT22,
+    PRODUCT_BT23,
+    PRODUCT_BT24,
+    PRODUCT_BT25,
+    PRODUCT_BT27,
+    PRODUCT_BT28,
+    PRODUCT_BT29,
+    PRODUCT_BT30,
+    PRODUCT_BT31,
+    PRODUCT_BT32,
+    PRODUCT_BT33,
+    PRODUCT_BT34,
+    PRODUCT_BT35,
+    PRODUCT_BT36,
+]
+EDR_PRODUCTS = [
+    PRODUCT_CLEAR_SST,
+    PRODUCT_CLEAR_LST,
+    PRODUCT_CLEAR_SLST,
+    PRODUCT_CLEAR_NDVI,
+    PRODUCT_IST,
+    PRODUCT_INV,
+    PRODUCT_IND,
+    PRODUCT_ICON,
+    PRODUCT_CTT,
+    PRODUCT_TPW,
+    PRODUCT_FOG,
+]
+MASK_PRODUCTS = [
+    PRODUCT_CMASK,
+    PRODUCT_LSMASK,
+    PRODUCT_SIMASK,
+]
 
 
 class Frontend(roles.FrontendRole):
@@ -195,8 +448,21 @@ class Frontend(roles.FrontendRole):
         self.secondary_product_functions = {
             PRODUCT_SLST: self.create_slst,
             PRODUCT_BT20: self.create_bt_from_ir,
+            PRODUCT_BT21: self.create_bt_from_ir,
+            PRODUCT_BT22: self.create_bt_from_ir,
+            PRODUCT_BT23: self.create_bt_from_ir,
+            PRODUCT_BT24: self.create_bt_from_ir,
+            PRODUCT_BT25: self.create_bt_from_ir,
             PRODUCT_BT27: self.create_bt_from_ir,
+            PRODUCT_BT28: self.create_bt_from_ir,
+            PRODUCT_BT29: self.create_bt_from_ir,
+            PRODUCT_BT30: self.create_bt_from_ir,
             PRODUCT_BT31: self.create_bt_from_ir,
+            PRODUCT_BT32: self.create_bt_from_ir,
+            PRODUCT_BT33: self.create_bt_from_ir,
+            PRODUCT_BT34: self.create_bt_from_ir,
+            PRODUCT_BT35: self.create_bt_from_ir,
+            PRODUCT_BT36: self.create_bt_from_ir,
             PRODUCT_ADAPTIVE_BT20: self.create_adaptive_btemp,
             PRODUCT_ADAPTIVE_BT27: self.create_adaptive_btemp,
             PRODUCT_ADAPTIVE_BT31: self.create_adaptive_btemp,
@@ -299,7 +565,30 @@ class Frontend(roles.FrontendRole):
                 defaults.append(p)
 
         other_defaults = [
-            PRODUCT_VIS01, PRODUCT_VIS02, PRODUCT_VIS07, PRODUCT_VIS26, PRODUCT_BT20, PRODUCT_BT27, PRODUCT_BT31,
+            PRODUCT_VIS01,
+            PRODUCT_VIS02,
+            PRODUCT_VIS03,
+            PRODUCT_VIS04,
+            PRODUCT_VIS05,
+            PRODUCT_VIS06,
+            PRODUCT_VIS07,
+            PRODUCT_VIS26,
+            PRODUCT_BT20,
+            PRODUCT_BT21,
+            PRODUCT_BT22,
+            PRODUCT_BT23,
+            PRODUCT_BT24,
+            PRODUCT_BT25,
+            PRODUCT_BT27,
+            PRODUCT_BT28,
+            PRODUCT_BT29,
+            PRODUCT_BT30,
+            PRODUCT_BT31,
+            PRODUCT_BT32,
+            PRODUCT_BT33,
+            PRODUCT_BT34,
+            PRODUCT_BT35,
+            PRODUCT_BT36,
             PRODUCT_IST, PRODUCT_INV, PRODUCT_IND, PRODUCT_ICON, PRODUCT_CTT, PRODUCT_TPW, PRODUCT_FOG,
         ]
         return defaults + other_defaults
@@ -367,7 +656,7 @@ class Frontend(roles.FrontendRole):
         file_reader = self.file_readers[file_type]
         LOG.debug("Using file type '%s' and getting file key '%s' for product '%s'", file_type, file_key, product_name)
 
-        LOG.info("Writing product '%s' data to binary file", product_name)
+        LOG.debug("Writing product '%s' data to binary file", product_name)
         filename = product_name + ".dat"
         if os.path.isfile(filename):
             if not self.overwrite_existing:
@@ -377,10 +666,9 @@ class Frontend(roles.FrontendRole):
                 LOG.warning("Binary file already exists, will overwrite: %s", filename)
 
         try:
-            # TODO: Do something with data type
-            shape = file_reader.write_var_to_flat_binary(file_key, filename)
             data_type = file_reader.get_data_type(file_key)
             fill_value = file_reader.get_fill_value(file_key)
+            shape = file_reader.write_var_to_flat_binary(file_key, filename, dtype=data_type)
             rows_per_scan = GEO_PAIRS[product_def.get_geo_pair_name(self.available_file_types)].rows_per_scan
         except StandardError:
             LOG.error("Could not extract data from file")
@@ -414,10 +702,10 @@ class Frontend(roles.FrontendRole):
         return one_swath
 
     def create_scene(self, products=None, **kwargs):
-        LOG.info("Loading scene data...")
+        LOG.debug("Loading scene data...")
         # If the user didn't provide the products they want, figure out which ones we can create
         if products is None:
-            LOG.info("No products specified to frontend, will try to load logical defaults")
+            LOG.debug("No products specified to frontend, will try to load logical defaults")
             products = self.default_products
 
         # Do we actually have all of the files needed to create the requested products?
@@ -558,7 +846,24 @@ class Frontend(roles.FrontendRole):
         try:
             output_data = ir_product.copy_array(filename=filename, read_only=False)
             sat = ir_product["satellite"]
-            band_number = {PRODUCT_BT20: 20, PRODUCT_BT27: 27, PRODUCT_BT31: 31}[product_name]
+            band_number = {
+                PRODUCT_BT20: 20,
+                PRODUCT_BT21: 21,
+                PRODUCT_BT22: 22,
+                PRODUCT_BT23: 23,
+                PRODUCT_BT24: 24,
+                PRODUCT_BT25: 25,
+                PRODUCT_BT27: 27,
+                PRODUCT_BT28: 28,
+                PRODUCT_BT29: 29,
+                PRODUCT_BT30: 30,
+                PRODUCT_BT31: 31,
+                PRODUCT_BT32: 32,
+                PRODUCT_BT33: 33,
+                PRODUCT_BT34: 34,
+                PRODUCT_BT35: 35,
+                PRODUCT_BT36: 36,
+            }[product_name]
             # since the input and output fill value and the invalid calculation value are all NaN we don't have to do
             # any extra calculations
             output_data[~ir_mask] = bright_shift(sat.title(), output_data[~ir_mask], band_number)
@@ -654,21 +959,32 @@ class Frontend(roles.FrontendRole):
         return one_swath
 
     def create_cloud_land_cleared(self, product_name, swath_definition, products_created,
-                                  cloud_values_to_clear=[1, 2], lsmask_values_to_clear=[1, 2]):
+                                  cloud_values_to_clear=[1, 2], lsmask_values_to_clear=[3, 4], simask_values_to_clear=[1]):
         product_def = PRODUCTS[product_name]
         deps = product_def.dependencies
-        if len(deps) != 3:
-            LOG.error("Expected 1 dependencies to create cleared product, got %d" % (len(deps),))
-            raise RuntimeError("Expected 1 dependencies to create cleared product, got %d" % (len(deps),))
+        if len(deps) == 4:
+            base_product_name = deps[0]
+            cmask_product_name = deps[1]
+            lsmask_product_name = deps[2]
+            simask_product_name = deps[3]
+        elif len(deps) == 3:
+            base_product_name = deps[0]
+            cmask_product_name = deps[1]
+            lsmask_product_name = deps[2]
+            simask_product_name = None
+        else:
+            LOG.error("Expected 3 or 4 dependencies to create cleared product, got %d" % (len(deps),))
+            raise RuntimeError("Expected 3 or 4 dependencies to create cleared product, got %d" % (len(deps),))
 
-        base_product_name = deps[0]
-        cmask_product_name = deps[1]
-        lsmask_product_name = deps[2]
         base_product = products_created[base_product_name]
         fill = base_product["fill_value"]
         base_mask = base_product.get_data_mask()
         cmask = products_created[cmask_product_name].get_data_array()
         lsmask = products_created[lsmask_product_name].get_data_array()
+        if simask_product_name is not None:
+            simask = products_created[simask_product_name].get_data_array()
+        else:
+            simask = None
         filename = product_name + ".dat"
         if os.path.isfile(filename):
             if not self.overwrite_existing:
@@ -682,6 +998,9 @@ class Frontend(roles.FrontendRole):
             # in1d operates on 1 dimensional arrays so we need to reshape it back to the swath shape
             shape = (base_product["swath_rows"], base_product["swath_columns"])
             clearable_mask = base_mask | numpy.in1d(cmask, cloud_values_to_clear).reshape(shape) | numpy.in1d(lsmask, lsmask_values_to_clear).reshape(shape)
+            if simask is not None:
+                LOG.debug("Clearing {!r} Snow/Ice values from {}".format(simask_values_to_clear, product_name))
+                clearable_mask |= numpy.in1d(simask, simask_values_to_clear).reshape(shape)
             output_data[clearable_mask] = fill
 
             one_swath = self.create_secondary_swath_object(product_name, swath_definition, filename,
@@ -695,13 +1014,15 @@ class Frontend(roles.FrontendRole):
 
     def create_cloud_sea_cleared(self, product_name, swath_definition, products_created):
         return self.create_cloud_land_cleared(product_name, swath_definition, products_created,
-                                              lsmask_values_to_clear=[2, 3, 4])
+                                              lsmask_values_to_clear=[1])
 
     def _get_day_percentage(self, sza_swath):
         if "day_percentage" not in sza_swath:
             sza_data = sza_swath.get_data_array()
-            day_mask = (sza_data < 90) & ~sza_swath.get_data_mask()
-            sza_swath["day_percentage"] = (numpy.count_nonzero(day_mask) / sza_data.size) * 100.0
+            invalid_mask = sza_swath.get_data_mask()
+            valid_day_mask = (sza_data < 90) & ~invalid_mask
+            fraction_day = numpy.count_nonzero(valid_day_mask) / (float(sza_data.size) - numpy.count_nonzero(invalid_mask))
+            sza_swath["day_percentage"] = fraction_day * 100.0
         else:
             LOG.debug("Day percentage found in SZA swath already")
         return sza_swath["day_percentage"]
@@ -740,6 +1061,16 @@ def add_frontend_argument_groups(parser):
     group = parser.add_argument_group(title=group_title, description="swath extraction options")
     group.add_argument("-p", "--products", dest="products", nargs="+", default=None, action=ExtendAction,
                        help="Specify frontend products to process")
+    group.add_argument('--ir-products', dest='products', action=ExtendConstAction, const=RAD_PRODUCTS,
+                       help="Add IR products to list of products")
+    group.add_argument('--bt-products', dest='products', action=ExtendConstAction, const=BT_PRODUCTS,
+                       help="Add BT products to list of products")
+    group.add_argument('--vis-products', dest='products', action=ExtendConstAction, const=VIS_PRODUCTS,
+                       help="Add Visible products to list of products")
+    group.add_argument('--edr-products', dest='products', action=ExtendConstAction, const=EDR_PRODUCTS,
+                       help="Add EDR products and temperature difference 'fog' to list of products")
+    group.add_argument('--mask-products', dest='products', action=ExtendConstAction, const=MASK_PRODUCTS,
+                       help="Add cloud and other mask products to list of products")
     group.add_argument('--adaptive-bt', dest='products', action=ExtendConstAction, const=ADAPTIVE_BT_PRODUCTS,
                        help="Create adaptively scaled brightness temperature bands")
     return ["Frontend Initialization", "Frontend Swath Extraction"]

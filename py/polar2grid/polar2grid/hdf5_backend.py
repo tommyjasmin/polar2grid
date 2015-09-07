@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # encoding: utf-8
-# Copyright (C) 2014 Space Science and Engineering Center (SSEC),
+# Copyright (C) 2012-2015 Space Science and Engineering Center (SSEC),
 # University of Wisconsin-Madison.
 #
 # This program is free software: you can redistribute it and/or modify
@@ -27,13 +27,16 @@
 # 1225 West Dayton Street
 # Madison, WI  53706
 # david.hoese@ssec.wisc.edu
-"""polar2grid backend to take polar-orbitting satellite data arrays
-and place it into an hdf5 file.
+"""The HDF5 backend creates HDF5 files with gridded products. By default it creates
+one HDF5 file with all products in the same file. Products are grouped together in
+HDF5 data groups for the grid that they are remapped to. Each grid data group has
+attributes describing the grid it represents. See the command line arguments for
+this backend for information on compressing the HDF5 files and providing longitude
+and latitude datasets in the files.
 
 :author:       David Hoese (davidh)
-:contact:      david.hoese@ssec.wisc.edu
 :organization: Space Science and Engineering Center (SSEC)
-:copyright:    Copyright (c) 2014 University of Wisconsin SSEC. All rights reserved.
+:copyright:    Copyright (c) 2012-2015 University of Wisconsin SSEC. All rights reserved.
 :date:         Dec 2014
 :license:      GNU GPLv3
 
@@ -50,7 +53,7 @@ import sys
 import logging
 
 LOG = logging.getLogger(__name__)
-DEFAULT_OUTPUT_PATTERN = "%(satellite)s_%(instrument)s_%(begin_time)s.h5"
+DEFAULT_OUTPUT_PATTERN = "{satellite}_{instrument}_{begin_time}.h5"
 
 
 class Backend(roles.BackendRole):
@@ -75,9 +78,9 @@ class Backend(roles.BackendRole):
 
         if not output_pattern:
             output_pattern = DEFAULT_OUTPUT_PATTERN
-        if "%" in output_pattern:
+        if "{" in output_pattern:
             # format the filename
-            of_kwargs = gridded_product.copy()
+            of_kwargs = gridded_product.copy(as_dict=True)
             # of_kwargs["data_type"] = data_type
             output_filename = self.create_output_filename(output_pattern,
                                                           grid_name=grid_def["grid_name"],
@@ -109,6 +112,7 @@ class Backend(roles.BackendRole):
 
             for product_name, gridded_product in gridded_scene.items():
                 try:
+                    LOG.info("Creating HDF5 output for product: %s", product_name)
                     self.create_output_from_product(gridded_product, parent=h5_group, **kwargs)
                 except StandardError:
                     LOG.error("Could not create output for '%s'", product_name)
@@ -172,10 +176,6 @@ class Backend(roles.BackendRole):
             parent = self.create_hdf5_file(output_filename, append=append)
 
         try:
-            # LOG.info("Scaling %s data to fit in geotiff...", gridded_product["product_name"])
-            # data = self.rescaler.rescale_product(gridded_product, data_type,
-            #                                      inc_by_one=inc_by_one, fill_value=fill_value)
-
             # Create the dataset
             data = gridded_product.get_data_array()
             product_name = gridded_product["product_name"]
@@ -192,7 +192,7 @@ class Backend(roles.BackendRole):
             ds.attrs["begin_time"] = gridded_product["begin_time"].isoformat()
             ds.attrs["end_time"] = gridded_product["end_time"].isoformat()
         except StandardError:
-            if not self.keep_intermediate and os.path.isfile(output_filename):
+            if not self.keep_intermediate and output_filename and os.path.isfile(output_filename):
                 os.remove(output_filename)
             raise
 
@@ -205,7 +205,7 @@ def add_backend_argument_groups(parser):
     group.add_argument('--rescale-configs', nargs="*", dest="rescale_configs",
                        help="alternative rescale configuration files")
     group = parser.add_argument_group(title="Backend Output Creation")
-    group.add_argument("-o", "--output-pattern", default=DEFAULT_OUTPUT_PATTERN,
+    group.add_argument("--output-pattern", default=DEFAULT_OUTPUT_PATTERN,
                        help="output filenaming pattern")
     # group.add_argument('--dont-inc', dest="inc_by_one", default=True, action="store_false",
     #                    help="do not increment data by one (ex. 0-254 -> 1-255 with 0 being fill)")
@@ -223,7 +223,7 @@ def add_backend_argument_groups(parser):
 def main():
     from polar2grid.core.script_utils import create_basic_parser, create_exc_handler, setup_logging
     from polar2grid.core.containers import GriddedScene, GriddedProduct
-    parser = create_basic_parser(description="Create geotiff files from provided gridded scene or product data")
+    parser = create_basic_parser(description="Create HDF5 files from provided gridded scene or product data")
     subgroup_titles = add_backend_argument_groups(parser)
     parser.add_argument("--scene", required=True, help="JSON SwathScene filename to be remapped")
     global_keywords = ("keep_intermediate", "overwrite_existing", "exit_on_error")

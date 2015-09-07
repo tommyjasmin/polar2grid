@@ -40,13 +40,13 @@ http://www.ssec.wisc.edu/software/polar2grid/
 """
 __docformat__ = "restructuredtext en"
 import os
-from setuptools import setup, find_packages
+from setuptools import setup, find_packages, Command
 from distutils.extension import Extension
 import numpy
 
 extensions = [
     Extension("polar2grid.remap._ll2cr", sources=["polar2grid/remap/_ll2cr.pyx"], extra_compile_args=["-O3", "-Wno-unused-function"]),
-    Extension("polar2grid.remap._fornav", sources=["polar2grid/remap/_fornav.pyx", "polar2grid/remap/_fornav_templates.cpp"], extra_compile_args=["-O3", "-Wno-unused-function"], language="c++")
+    Extension("polar2grid.remap._fornav", sources=["polar2grid/remap/_fornav.pyx", "polar2grid/remap/_fornav_templates.cpp"], language="c++", extra_compile_args=["-O3", "-Wno-unused-function"])
 ]
 
 try:
@@ -74,6 +74,22 @@ if not os.getenv("USE_CYTHON", False) or cythonize is None:
         return extensions
 
 version = '2.0.0'
+
+
+class PyTest(Command):
+    user_options = []
+
+    def initialize_options(self):
+        pass
+
+    def finalize_options(self):
+        pass
+
+    def run(self):
+        import subprocess
+        import sys
+        errno = subprocess.call([sys.executable, 'runtests.py'])
+        raise SystemExit(errno)
 
 
 def readme():
@@ -112,7 +128,13 @@ extras_require = {
 extras_require["all"] = [x for y in extras_require.values() for x in y]
 
 entry_points = {
-    'console_scripts': [],
+    'console_scripts': [
+        'p2g_glue=polar2grid.glue:main',
+        'p2g_frontend=polar2grid.glue:main_frontend',
+        'p2g_backend=polar2grid.glue:main_backend',
+        'p2g_remap=polar2grid.remap.__main__:main',
+        'p2g_composite=polar2grid.compositors:main',
+    ],
     'polar2grid.backend_class': [
         'gtiff=polar2grid.gtiff_backend:Backend',
         'awips=polar2grid.awips.awips_netcdf:Backend',
@@ -131,6 +153,7 @@ entry_points = {
         'rgb=polar2grid.compositors.rgb:RGBCompositor',
         'true_color=polar2grid.compositors.rgb:TrueColorCompositor',
         'false_color=polar2grid.compositors.rgb:FalseColorCompositor',
+        'crefl_sharpen=polar2grid.compositors.rgb:CreflRGBSharpenCompositor',
         ],
     }
 
@@ -151,9 +174,10 @@ setup(
     packages=find_packages(exclude=['ez_setup', 'examples', 'tests']),
     namespace_packages=["polar2grid"],
     include_package_data=True,
-    package_data={'polar2grid': ["compositors/*.ini", "awips/ncml/*.ncml", "awips/*.ini", "grids/*.conf", "ninjo/*.ini"]},
+    package_data={'polar2grid': ["compositors/*.ini", "awips/*.ini", "grids/*.conf", "ninjo/*.ini"]},
     zip_safe=True,
-    test_suite="polar2grid.tests.__init__",
+    tests_require=['py.test'],
+    cmdclass={'test': PyTest},
     install_requires=[
         'setuptools',       # reading configuration files
         'numpy',

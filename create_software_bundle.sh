@@ -111,6 +111,7 @@ cp ${BUNDLE_SCRIPTS_DIR}/*.sh ${BUNDLE_SCRIPTS_DIR}/*.txt bin/
 echo "Creating python packages..."
 export PATH=${SB_NAME}/ShellB3/bin:$PATH
 cd "$PY_DIR"
+
 make clean
 # Have to use 'python setup.py install' because using easy_install on source tarballs doesn't compile extensions for some reason
 CFLAGS="-fno-strict-aliasing -L${SB_NAME}/ShellB3/lib" INSTALL_DIR="${SB_NAME}/ShellB3" make all_install

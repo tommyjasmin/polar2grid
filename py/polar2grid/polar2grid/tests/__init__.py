@@ -39,22 +39,13 @@
 """
 __docformat__ = "restructuredtext en"
 
-import os
-import sys
-import logging
-import unittest
-
-LOG = logging.getLogger(__name__)
-
-
-def load_tests(loaders, tests, pattern):
-    testsuite = unittest.TestLoader().discover(os.path.dirname(os.path.abspath(__file__)))
-    return testsuite
-
 
 def main():
-    return unittest.main()
+    import os
+    import pytest
+    return pytest.main([os.path.dirname(os.path.realpath(__file__))])
 
 
 if __name__ == "__main__":
+    import sys
     sys.exit(main())

@@ -40,7 +40,7 @@
 __docformat__ = "restructuredtext en"
 
 from polar2grid.core.frontend_utils import BaseFileReader, BaseMultiFileReader
-from polar2grid.modis.modis_geo_interp_250 import interpolate_geolocation
+from polar2grid.modis.modis_geo_interp_250 import interpolate_geolocation_cartesian
 
 import os
 import logging
@@ -60,13 +60,31 @@ K_LONGITUDE_250 = "longitude250_var"
 K_LATITUDE_250 = "latitude250_var"
 K_VIS01 = "vis01_var"
 K_VIS02 = "vis02_var"
+K_VIS03 = "vis03_var"
+K_VIS04 = "vis04_var"
+K_VIS05 = "vis05_var"
+K_VIS06 = "vis06_var"
 K_VIS07 = "vis07_var"
 K_VIS26 = "vis26_var"
 K_IR20 = "ir20_var"
+K_IR21 = "ir21_var"
+K_IR22 = "ir22_var"
+K_IR23 = "ir23_var"
+K_IR24 = "ir24_var"
+K_IR25 = "ir25_var"
 K_IR27 = "ir27_var"
+K_IR28 = "ir28_var"
+K_IR29 = "ir29_var"
+K_IR30 = "ir30_var"
 K_IR31 = "ir31_var"
+K_IR32 = "ir32_var"
+K_IR33 = "ir33_var"
+K_IR34 = "ir34_var"
+K_IR35 = "ir35_var"
+K_IR36 = "ir36_var"
 K_CMASK = "cloud_mask_var"
 K_LSMASK = "land_sea_mask_var"
+K_SIMASK = "snow_ice_mask_var"
 K_SST = "sst_var"
 K_LST = "lst_var"
 K_SLST = "slst_var"
@@ -348,7 +366,7 @@ class FileReader(BaseFileReader):
     """
     # Special values (not verified, but this is what I was told) because who would store special values in a file
     # these are used in reflectance band 1 and 2
-    SATURATION_VALUE = 65535
+    SATURATION_VALUE = 65533
     # if a value couldn't be aggregated from 250m/500m to 1km then we should clip those too
     CANT_AGGR_VALUE = 65528
 
@@ -361,6 +379,8 @@ class FileReader(BaseFileReader):
         self.satellite = self.file_handle.satellite.lower()
         self.begin_time = self.file_handle.begin_time
         self.end_time = self.file_handle.end_time
+        # special hack for storing the 250m resolution navigation
+        self.nav_interpolation = {"250": [None, None]}
 
     def __getitem__(self, item):
         known_item = self.file_type_info.get(item, item)
@@ -396,19 +416,27 @@ class FileReader(BaseFileReader):
         data = data.astype(var_info.data_type)
 
         # Get the fill value
-        if var_info.fill_attr_name:
+        if var_info.fill_attr_name and isinstance(var_info.fill_attr_name, (str, unicode)):
             fill_value = self[var_info.var_name + "." + var_info.fill_attr_name]
+            mask = data == fill_value
+        elif var_info.fill_attr_name:
+            fill_value = var_info.fill_attr_name
+            mask = data >= fill_value
         else:
             fill_value = -999.0
-        mask = mask_helper(data, fill_value)
+            mask = data == fill_value
 
         # Get the valid_min and valid_max
         valid_min, valid_max = None, None
         if var_info.range_attr_name:
-            valid_min, valid_max = self[var_info.var_name + "." + var_info.range_attr_name]
+            if isinstance(var_info.range_attr_name, (str, unicode)):
+                valid_min, valid_max = self[var_info.var_name + "." + var_info.range_attr_name]
+            else:
+                valid_min, valid_max = var_info.range_attr_name
 
         # Certain data need to have special values clipped
         if var_info.clip_saturated and valid_max is not None:
+            LOG.debug("Setting any saturation or \"can't aggregate\" values to valid maximum")
             data[(data == self.CANT_AGGR_VALUE) | (data == self.SATURATION_VALUE)] = valid_max
 
         # Get the scaling factors
@@ -440,11 +468,39 @@ class FileReader(BaseFileReader):
 
         # Special case: 250m Resolution
         if var_info.interpolate:
-            LOG.debug("Interpolating to higher resolution: %s" % (var_info.var_name,))
             if mask is not None:
                 data[mask] = numpy.nan
-            data = interpolate_geolocation(data)
-            data[numpy.isnan(data)] = fill
+
+            if self.nav_interpolation["250"][0] is not None and self.nav_interpolation["250"][1] is not None:
+                LOG.debug("Returning previously interpolated 250m resolution geolocation data")
+                data = self.nav_interpolation["250"][not (item == K_LONGITUDE_250)]
+                self.nav_interpolation["250"] = [None, None]
+                return data
+
+            if item == K_LONGITUDE_250:
+                self.nav_interpolation["250"][0] = data
+            else:
+                self.nav_interpolation["250"][1] = data
+
+            if self.nav_interpolation["250"][0] is None or self.nav_interpolation["250"][1] is None:
+                # We don't have the other coordinate data yet
+                self.get_swath_data(K_LONGITUDE_250 if item == K_LATITUDE_250 else K_LATITUDE_250, fill=fill)
+            else:
+                # We already have the other coordinate variable, the user isn't asking for this item so just return
+                LOG.debug("Returning 'None' because this instance of the function shouldn't have been called by the user")
+                return None
+
+            LOG.info("Interpolating to higher resolution: %s" % (var_info.var_name,))
+            lon_data, lat_data = self.nav_interpolation["250"]
+
+            new_lon_data, new_lat_data = interpolate_geolocation_cartesian(lon_data, lat_data)
+
+            new_lon_data[numpy.isnan(new_lon_data)] = fill
+            new_lat_data[numpy.isnan(new_lat_data)] = fill
+            # Cache the results when the user requests the other coordinate
+            self.nav_interpolation["250"] = [new_lon_data, new_lat_data]
+
+            data = new_lon_data if item == K_LONGITUDE_250 else new_lat_data
         elif mask is not None:
             data[mask] = fill
 
@@ -485,11 +541,29 @@ FILE_TYPES[FT_MOD03] = {
 }
 FILE_TYPES[FT_MOD021KM] = {
     K_VIS01: FileInfo("EV_250_Aggr1km_RefSB", 0, "reflectance_scales", "reflectance_offsets"),
+    K_VIS02: FileInfo("EV_250_Aggr1km_RefSB", 1, "reflectance_scales", "reflectance_offsets", clip_saturated=True),
+    K_VIS03: FileInfo("EV_500_Aggr1km_RefSB", 0, "reflectance_scales", "reflectance_offsets"),
+    K_VIS04: FileInfo("EV_500_Aggr1km_RefSB", 1, "reflectance_scales", "reflectance_offsets"),
+    K_VIS05: FileInfo("EV_500_Aggr1km_RefSB", 2, "reflectance_scales", "reflectance_offsets"),
+    K_VIS06: FileInfo("EV_500_Aggr1km_RefSB", 3, "reflectance_scales", "reflectance_offsets"),
     K_VIS07: FileInfo("EV_500_Aggr1km_RefSB", 4, "reflectance_scales", "reflectance_offsets"),
     K_VIS26: FileInfo("EV_Band26", None, "reflectance_scales", "reflectance_offsets"),
     K_IR20: FileInfo("EV_1KM_Emissive", 0, "radiance_scales", "radiance_offsets"),
+    K_IR21: FileInfo("EV_1KM_Emissive", 1, "radiance_scales", "radiance_offsets"),
+    K_IR22: FileInfo("EV_1KM_Emissive", 2, "radiance_scales", "radiance_offsets"),
+    K_IR23: FileInfo("EV_1KM_Emissive", 3, "radiance_scales", "radiance_offsets"),
+    K_IR24: FileInfo("EV_1KM_Emissive", 4, "radiance_scales", "radiance_offsets"),
+    K_IR25: FileInfo("EV_1KM_Emissive", 5, "radiance_scales", "radiance_offsets"),
     K_IR27: FileInfo("EV_1KM_Emissive", 6, "radiance_scales", "radiance_offsets"),
+    K_IR28: FileInfo("EV_1KM_Emissive", 7, "radiance_scales", "radiance_offsets"),
+    K_IR29: FileInfo("EV_1KM_Emissive", 8, "radiance_scales", "radiance_offsets"),
+    K_IR30: FileInfo("EV_1KM_Emissive", 9, "radiance_scales", "radiance_offsets"),
     K_IR31: FileInfo("EV_1KM_Emissive", 10, "radiance_scales", "radiance_offsets"),
+    K_IR32: FileInfo("EV_1KM_Emissive", 11, "radiance_scales", "radiance_offsets"),
+    K_IR33: FileInfo("EV_1KM_Emissive", 12, "radiance_scales", "radiance_offsets"),
+    K_IR34: FileInfo("EV_1KM_Emissive", 13, "radiance_scales", "radiance_offsets"),
+    K_IR35: FileInfo("EV_1KM_Emissive", 14, "radiance_scales", "radiance_offsets"),
+    K_IR36: FileInfo("EV_1KM_Emissive", 15, "radiance_scales", "radiance_offsets"),
 }
 FILE_TYPES[FT_MOD02HKM] = {}
 FILE_TYPES[FT_MOD02QKM] = {
@@ -522,6 +596,7 @@ FILE_TYPES[FT_MOD35] = {
 FILE_TYPES[FT_MASK_BYTE1] = {
     K_CMASK: FileInfo("MODIS_Cloud_Mask", data_type=numpy.int32),
     K_LSMASK: FileInfo("MODIS_Simple_LandSea_Mask", data_type=numpy.int32),
+    K_SIMASK: FileInfo("MODIS_Snow_Ice_Flag", data_type=numpy.int32),
 }
 FILE_TYPES[FT_MODLST] = {
     K_LST: FileInfo("LST", range_attr_name=None, offset_attr_name=None, fill_attr_name="missing_value"),

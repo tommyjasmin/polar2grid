@@ -99,7 +99,7 @@ class CompositorManager(dict):
                     config_file = open(config_file, 'r')
                 else:
                     # they have specified a package provided file
-                    LOG.info("Loading package provided configuration file: '%s'" % (config_file,))
+                    LOG.debug("Loading package provided configuration file: '%s'" % (config_file,))
                     try:
                         parts = config_file.split(":")
                         mod_part, file_part = parts if len(parts) == 2 else ("", parts[0])
@@ -139,6 +139,7 @@ class CompositorManager(dict):
         comp_cls_name = kwargs.pop("compositor_class")
         comp_cls = self.load_compositor_class(comp_cls_name)
 
+        LOG.debug("Initializing compositor '%s' with %r", name, kwargs)
         return comp_cls(**kwargs)
 
     def create_compositor(self, name):
