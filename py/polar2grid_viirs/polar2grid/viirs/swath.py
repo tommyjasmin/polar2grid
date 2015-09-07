@@ -47,9 +47,12 @@ from . import guidebook
 from .io import VIIRSSDRMultiReader, HDF5Reader
 from polar2grid.core import containers, histogram, roles
 from polar2grid.core.frontend_utils import ProductDict, GeoPairDict
-from .prescale import adaptive_dnb_scale, dnb_scale
+from .prescale import adaptive_dnb_scale, dnb_nighttime_scale, dnb_scale
 import numpy
+import math
 from scipy.special import erf
+from scipy.optimize import curve_fit
+import matplotlib.pyplot as plt
 
 import os
 import sys
@@ -186,6 +189,11 @@ PRODUCTS.add_product(PRODUCT_ADAPTIVE_M13, PAIR_MNAV, "equalized_brightness_temp
 PRODUCTS.add_product(PRODUCT_ADAPTIVE_M14, PAIR_MNAV, "equalized_brightness_temperature", dependencies=(PRODUCT_M14,))
 PRODUCTS.add_product(PRODUCT_ADAPTIVE_M15, PAIR_MNAV, "equalized_brightness_temperature", dependencies=(PRODUCT_M15,))
 PRODUCTS.add_product(PRODUCT_ADAPTIVE_M16, PAIR_MNAV, "equalized_brightness_temperature", dependencies=(PRODUCT_M16,))
+
+# Define model function to be used to fit to the data above:
+def gauss(x, *p):
+    A, mu, sigma = p
+    return A*numpy.exp(-(x-mu)**2/(2.*sigma**2))
 
 
 class Frontend(roles.FrontendRole):
@@ -379,6 +387,7 @@ class Frontend(roles.FrontendRole):
         return swath_definition
 
     def create_raw_swath_object(self, product_name, swath_definition):
+        LOG.error("TJJ create_raw_swath_object, product_name: %s", product_name)
         product_def = PRODUCTS[product_name]
         index = 0 if self.use_terrain_corrected else 1
         file_type = product_def.get_file_type(index=index)
@@ -417,14 +426,26 @@ class Frontend(roles.FrontendRole):
             LOG.debug("Extraction exception: ", exc_info=True)
             raise
 
-        one_swath = containers.SwathProduct(
-            product_name=product_name, description=product_def.description, units=product_def.units,
-            satellite=file_reader.satellite, instrument=file_reader.instrument,
-            begin_time=file_reader.begin_time, end_time=file_reader.end_time,
-            swath_definition=swath_definition, fill_value=numpy.nan,
-            swath_rows=shape[0], swath_columns=shape[1], data_type=numpy.float32, swath_data=filename,
-            source_filenames=file_reader.filepaths, data_kind=product_def.data_kind, rows_per_scan=rows_per_scan
-        )
+        if (file_key == "qf1_viirscmip"):
+            LOG.info("TJJ CM, fill val TBD...") 
+            one_swath = containers.SwathProduct(
+                product_name=product_name, description=product_def.description, units=product_def.units,
+                satellite=file_reader.satellite, instrument=file_reader.instrument,
+                begin_time=file_reader.begin_time, end_time=file_reader.end_time,
+                swath_definition=swath_definition, fill_value=0,
+                swath_rows=shape[0], swath_columns=shape[1], data_type=numpy.float32, swath_data=filename,
+                source_filenames=file_reader.filepaths, data_kind=product_def.data_kind, rows_per_scan=rows_per_scan
+            )
+        else:
+            LOG.info("TJJ all others, fill val NaN...") 
+            one_swath = containers.SwathProduct(
+                product_name=product_name, description=product_def.description, units=product_def.units,
+                satellite=file_reader.satellite, instrument=file_reader.instrument,
+                begin_time=file_reader.begin_time, end_time=file_reader.end_time,
+                swath_definition=swath_definition, fill_value=numpy.nan,
+                swath_rows=shape[0], swath_columns=shape[1], data_type=numpy.float32, swath_data=filename,
+                source_filenames=file_reader.filepaths, data_kind=product_def.data_kind, rows_per_scan=rows_per_scan
+            )
         file_key = product_def.get_file_key(index=index)
         one_swath["orbit_rows"] = file_reader.get_orbit_rows(file_key)
         return one_swath
@@ -761,10 +782,28 @@ class Frontend(roles.FrontendRole):
 
         try:
             output_data = dnb_product.copy_array(filename=filename, read_only=False)
+            print("TJJ POST... ", numpy.nanmin(output_data), numpy.nanmax(output_data), numpy.nanmin(dnb_data), numpy.nanmax(dnb_data))
 
-            # From Steve Miller and Curtis Seaman
+            ### From Steve Miller and Curtis Seaman
             # maxval = 10.^(-1.7 - (((2.65+moon_factor1+moon_factor2))*(1+erf((solar_zenith-95.)/(5.*sqrt(2.0))))))
             # minval = 10.^(-4. - ((2.95+moon_factor2)*(1+erf((solar_zenith-95.)/(5.*sqrt(2.0))))))
+            # scaled_radiance = (radiance - minval) / (maxval - minval)
+            # radiance = sqrt(scaled_radiance)
+
+            ### Update to method from Curtis Seaman
+            # maxval = 10.^(-1.7 - (((2.65+moon_factor1+moon_factor2))*(1+erf((solar_zenith-95.)/(5.*sqrt(2.0))))))
+            # minval = 10.^(-4. - ((2.95+moon_factor2)*(1+erf((solar_zenith-95.)/(5.*sqrt(2.0))))))
+            # saturated_pixels = where(radiance gt maxval, nsatpx)
+            # saturation_pct = float(nsatpx)/float(n_elements(radiance))
+            # print, 'Saturation (%) = ', saturation_pct
+            #
+            # while saturation_pct gt 0.005 do begin
+            #   maxval = maxval*1.1
+            #   saturated_pixels = where(radiance gt maxval, nsatpx)
+            #   saturation_pct = float(nsatpx)/float(n_elements(radiance))
+            #   print, saturation_pct
+            # endwhile
+            #
             # scaled_radiance = (radiance - minval) / (maxval - minval)
             # radiance = sqrt(scaled_radiance)
 
@@ -773,11 +812,20 @@ class Frontend(roles.FrontendRole):
             erf_portion = 1 + erf((sza_data - 95.0) / (5.0 * numpy.sqrt(2.0)))
             max_val = numpy.power(10, -1.7 - (2.65 + moon_factor1 + moon_factor2) * erf_portion)
             min_val = numpy.power(10, -4.0 - (2.95 + moon_factor2) * erf_portion)
-            numpy.sqrt((dnb_data - min_val) / (max_val - min_val), out=output_data)
 
-            # TJJ clip swath edges, 1/16 on either side zeroed out
-            output_data[0:768,0:253] = 0
-            output_data[0:768,3610:] = 0
+            # Update from Curtis Seaman, increase max radiance curve until less than 0.5% is saturated
+            saturation_pct = float(numpy.count_nonzero(dnb_data > max_val)) / dnb_data.size
+            LOG.debug("Dynamic DNB saturation percentage: %f", saturation_pct)
+            while saturation_pct > 0.005:
+                max_val *= 1.1
+                saturation_pct = float(numpy.count_nonzero(dnb_data > max_val)) / dnb_data.size
+                LOG.debug("Dynamic DNB saturation percentage: %f", saturation_pct)
+
+            inner_sqrt = (dnb_data - min_val) / (max_val - min_val)
+            # clip negative values to 0 before the sqrt
+            inner_sqrt[inner_sqrt < 0] = 0
+            numpy.sqrt(inner_sqrt, out=output_data)
+            print("TJJ POST... ", numpy.nanmin(output_data), numpy.nanmax(output_data), numpy.nanmin(dnb_data), numpy.nanmax(dnb_data))
 
             one_swath = self.create_secondary_swath_object(product_name, swath_definition, filename,
                                                            dnb_product["data_type"], products_created)
@@ -810,12 +858,14 @@ class Frontend(roles.FrontendRole):
         moon_illum_fraction = sum(geo_file_reader[guidebook.K_MOONILLUM]) / (100.0 * len(geo_file_reader))
         LOG.debug("TJJ Moon Illum Fraction: %f", moon_illum_fraction)
 
-        if (moon_illum_fraction > 0.3):
-           LOG.info("Moon illumination is > 30%, will not create '%s' product", product_name)
+        # TJJ - ONLY USE DATA WITH under 20% moon illumination!
+        if (moon_illum_fraction > 0.2):
+           LOG.info("Moon illumination is > 20%, will not create '%s' product", product_name)
            return None
 
         dnb_product = products_created[dnb_product_name]
         dnb_data = dnb_product.get_data_array()
+        LOG.debug("TJJ PRE min: %f, max: %f" % (numpy.nanmin(dnb_data), numpy.nanmax(dnb_data)))
         sza_data = products_created[sza_product_name].get_data_array()
         lza_data = products_created[lza_product_name].get_data_array()
         filename = product_name + ".dat"
@@ -834,6 +884,14 @@ class Frontend(roles.FrontendRole):
         try:
             output_data = dnb_product.copy_array(filename=filename, read_only=False)
 
+            # adaptive_dnb_scale(dnb_data, solarZenithAngle=sza_data, lunarZenithAngle=lza_data,
+            #                    moonIllumFraction=moon_illum_fraction, fillValue=fill, out=output_data)
+
+            LOG.debug("TJJ PRE-CALC min: %f, max: %f" % (numpy.nanmin(output_data), numpy.nanmax(output_data)))
+            # TJJ TEST - square to emphasize near-sat values (lights)
+            # NOPE! Don't want to do this - brightens limb artificially
+            # output_data = numpy.square(output_data)
+
             # From Steve Miller and Curtis Seaman
             # maxval = 10.^(-1.7 - (((2.65+moon_factor1+moon_factor2))*(1+erf((solar_zenith-95.)/(5.*sqrt(2.0))))))
             # minval = 10.^(-4. - ((2.95+moon_factor2)*(1+erf((solar_zenith-95.)/(5.*sqrt(2.0))))))
@@ -845,12 +903,113 @@ class Frontend(roles.FrontendRole):
             erf_portion = 1 + erf((sza_data - 95.0) / (5.0 * numpy.sqrt(2.0)))
             max_val = numpy.power(10, -1.7 - (2.65 + moon_factor1 + moon_factor2) * erf_portion)
             min_val = numpy.power(10, -4.0 - (2.95 + moon_factor2) * erf_portion)
-            numpy.sqrt((dnb_data - min_val) / (max_val - min_val), out=output_data)
+            # LOG.debug("Min: {}\n".format(min_val))
+            # LOG.debug("Max: {}\n".format(max_val))
 
+            # Update from Curtis Seaman, increase max radiance curve until less than 0.5% is saturated
+            saturation_pct = float(numpy.count_nonzero(dnb_data > max_val)) / dnb_data.size
+            LOG.debug("Dynamic DNB saturation percentage: %f", saturation_pct)
+            loopcount = 0
+            while saturation_pct > 0.005:
+                max_val *= 1.1
+                saturation_pct = float(numpy.count_nonzero(dnb_data > max_val)) / dnb_data.size
+                LOG.debug("Making Dynamic Adj, DNB saturation percentage now: %f", saturation_pct)
+                loopcount = loopcount + 1
+
+            # TJJ Testing more normalization techniques here...
+            # Ensure we always do at least 20 de-sat iterations
+            # Unless we fall below a very low saturation percentage
+            if (loopcount < 25):
+                while (loopcount < 25):
+                    if (saturation_pct < 0.0015): break
+                    max_val *= 1.1
+                    saturation_pct = float(numpy.count_nonzero(dnb_data > max_val)) / dnb_data.size
+                    LOG.debug("Making Default Adj, DNB saturation percentage now: %f", saturation_pct)
+                    loopcount = loopcount + 1
+
+            inner_sqrt = (dnb_data - min_val) / (max_val - min_val)
+
+            # clip negative values to 0 before the sqrt
+            inner_sqrt[inner_sqrt < 0] = 0
+            numpy.sqrt(inner_sqrt, out=output_data)
+
+            # adjust = (not math.isnan(output_data.max()))
+            adjust = False
+            data_mean = numpy.mean(output_data)
+            if (not numpy.isnan(data_mean)):
+                LOG.debug("Data mean: %f" % (numpy.mean(output_data)))
+                LOG.debug("Data stdev: %f" % (numpy.std(output_data)))
+                min_in = numpy.mean(output_data) - numpy.std(output_data)
+                if (min_in < 0):
+                    min_in = numpy.mean(output_data) / 2.0 
+                max_in = output_data.max()
+                from polar2grid.core.rescale import linear_flexible_scale
+                # TJJ, do we need mask? Don't think so, since no bow-tie for DNB
+                # mask = dnb_product.get_data_mask()
+                output_data = linear_flexible_scale(output_data, 0.0, max_in, min_in, max_in)
+                output_data[output_data < 0] = 0
+
+            if adjust:
+     
+                try:
+
+                    # TJJ - try to do min val normalization here...
+                    # Just kinda making this up. Look for first Gaussian distribution, go back 
+                    # two std-devs, clip the min here.
+    
+                    # make sure we avoid high end of the data
+                    upper_bound = output_data.max() * 0.25
+                    LOG.debug("Upper bound: %f" % (upper_bound))
+                    hist, bin_edges = numpy.histogram(output_data[output_data < 1], bins=1000, density=True)
+                    bin_centres = (bin_edges[:-1] + bin_edges[1:])/2
+      
+                    # p0 is the initial guess for the fitting coefficients (A, mu and sigma above)
+                    p0 = [1., 0., 1.]
+ 
+                    coeff, var_matrix = curve_fit(gauss, bin_centres, hist, p0=p0)
+
+                    # Get the fitted curve
+                    hist_fit = gauss(bin_centres, *coeff)
+
+                    # Finally, lets get the fitting parameters, i.e. the mean and standard deviation:
+                    LOG.debug("Data mean: %f" % (numpy.mean(output_data)))
+                    LOG.debug("Data min: %f, max: %f" % (output_data.min(), output_data.max()))
+                    LOG.debug("Fitted mean ={}\n".format(coeff[1]))
+                    LOG.debug("Fitted standard deviation ={}\n".format(coeff[2]))
+
+                    # plt.plot(bin_centres, hist, label='Test data')
+                    # plt.plot(bin_centres, hist_fit, label='Fitted data')
+                    # plt.show()
+
+                    # new min is 1 std-dev back from mean
+                    new_min = coeff[1] - coeff[2] 
+                    # make sure it stays positive
+                    # if it goes negative, we'll just lop off the bottom 20%
+                    if (new_min < 0):
+                        new_min = 0.2 * (output_data.max() - output_data.min())
+                    LOG.debug("New min: %f" % (new_min))
+                    max_in = output_data.max()
+                    from polar2grid.core.rescale import linear_flexible_scale
+                    # TJJ, do we need mask? Don't think so, since no bow-tie for DNB
+                    # mask = dnb_product.get_data_mask()
+                    output_data = linear_flexible_scale(output_data, 0.0, max_in, new_min, max_in)
+                    output_data[output_data < 0] = 0
+
+                    LOG.debug("Post mean: %f" % (numpy.mean(output_data)))
+                    LOG.debug("Post min: %f, max: %f" % (output_data.min(), output_data.max()))
+
+                except:
+                    LOG.debug("NORMALIZATION ERROR, SKIPPED ON THIS FILE!")
+
+            # XXX TJJ Aug 2015 - I should experiement with this!!
+            # Talk to Steve or Curtis about it...
+
+            LOG.debug("TJJ POST min: %f, max: %f" % (numpy.nanmin(output_data), numpy.nanmax(output_data)))
             # saturated_pixels = where(radiance gt maxval, nsatpx)
             # saturation_pct = float(nsatpx)/float(n_elements(radiance))
     
             # while saturation_pct gt 0.005 do begin
+            #    LOG.info("TJJ - Making saturation adjustment")
             #    maxval = maxval*1.1
             #    saturated_pixels = where(radiance gt maxval, nsatpx)
             #    saturation_pct = float(nsatpx)/float(n_elements(radiance))
@@ -863,7 +1022,7 @@ class Frontend(roles.FrontendRole):
             output_data[0:768,3610:] = 0
 
             # TJJ always apply night mask, avoid terminator issues
-            output_data[~night_mask] = 0;
+            output_data[~night_mask] = 0
 
             # acc to William, only use data if MI < 10% OR...
             # 10% < MI < 30% AND LZA > 90
@@ -871,8 +1030,11 @@ class Frontend(roles.FrontendRole):
             if ((moon_illum_fraction > 0.1) and (moon_illum_fraction < 0.3)):
                LOG.info("Moon illumination between 10% and 30%, masking where LZA > 90")
                moon_mask = lza_data > 90
-               output_data[~moon_mask] = 0;
+               output_data[~moon_mask] = 0
 
+            # so min value in swath differs from remap "fill" region
+            # TJJ WHOA! THIS did not work!
+            # output_data[output_data == 0] = 1
             one_swath = self.create_secondary_swath_object(product_name, swath_definition, filename,
                                                            dnb_product["data_type"], products_created)
         except StandardError:

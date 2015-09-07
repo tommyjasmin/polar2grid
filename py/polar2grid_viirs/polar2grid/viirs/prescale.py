@@ -235,6 +235,7 @@ def adaptive_dnb_scale(img, fillValue=-999.0, solarZenithAngle=None, lunarZenith
 
         # XXX TJJ - try replacing this with a straight 10E9 scaling? (and remove neg values?)
         histogram_equalization(img, night_mask, out=out)
+        # pass
 
     # if night_water is not None and (numpy.any(night_water)):
     #     log.debug ("  scaling DNB in night water mask")
@@ -266,6 +267,7 @@ def dnb_nighttime_scale(img, fillValue=-999.0, solarZenithAngle=None,
     if out is None:
         out = numpy.zeros_like(img)
 
+    LOG.debug("TJJ DNB NIGHTTIME_SCALE in...")
     # build the day, moon, and night area masks
     LOG.debug("Generating day, night, and mixed region masks...")
     day_mask, mixed_mask, night_mask, good_mask, moon_mask = \
@@ -291,6 +293,7 @@ def dnb_nighttime_scale(img, fillValue=-999.0, solarZenithAngle=None,
         elif weightedMoonIllumFract > 0.10 :
             local_histogram_equalization(img, tmp_night_mask, valid_data_mask=good_mask, local_radius_px=100, do_log_scale=True, out=out)
         else :
+            LOG.debug("TJJ DNB NIGHTTIME_SCALE loc hist...")
             local_histogram_equalization(img, tmp_night_mask, valid_data_mask=good_mask, local_radius_px=50, do_log_scale=True, out=out)
 
     # set any data that's not in the good areas to fill

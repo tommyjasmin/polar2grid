@@ -165,8 +165,8 @@ class VIIRSSDRReader(BaseFileReader):
         LOG.info("READING LAT MIN: %d", lat_min)
         LOG.info("READING LAT MAX: %d", lat_max)
 
-        # TJJ - throw out granules above and below lat +/- 65
-        if (int(lat_max) > 65):
+        # TJJ - throw out granules above 70 and below lat -65
+        if (int(lat_max) > 70):
             LOG.error("Granule out of Latitude upper bounds, skipping...")
             sys.exit(1)
         if (int(lat_min) < -65):
@@ -218,8 +218,12 @@ class VIIRSSDRReader(BaseFileReader):
             fill = 0
 
         data = self[var_info.var_path].value.astype(dtype)
-        if (item == 'qf1_viirscmip'):
-            data = (data & 0x0C)
+        # if (item == 'qf1_viirscmip'):
+            # mask off all but the two cloud confidence bits
+            # numpy.bitwise_and(data, 0x0C, out=data)
+            # numpy.right_shift(data, 2, out=data)
+            # data = (data & 0x0C)
+            # data = (data / 4)
 
         # Get the scaling factors
         scaling_factors = None
@@ -238,12 +242,66 @@ class VIIRSSDRReader(BaseFileReader):
         # Scale the data
         scaling_mask = None
         if scaling_factors is not None:
+            LOG.info("SCALE FACTORS NOT NONE")
             data, scaling_mask = self.scale_swath_data(data, scaling_factors)
 
         if mask is not None:
+            LOG.info("MASK NOT NONE")
             if scaling_factors is not None:
                 mask |= scaling_mask
             data[mask] = fill
+
+        # cloud mask seems to have bow-tie errors at swath edge 
+        # try zeroing out until I can find a better solution
+        # turned off for now
+        # if (item == 'wonthappen'):
+        # if (item == 'qf1_viirscmip'):
+        #    LOG.debug("TJJ BITMASK HACK FOR CM...")
+        #    # numpy.bitwise_and(data, 12)
+        #    # numpy.divide(data, 4)
+        #    # for x in numpy.nditer(data):
+        #    #    if (x > 4):
+        #    #       LOG.debug(x)
+        #    cmH = data.shape[0]
+        #    cmW = data.shape[1]
+        #    # loCut = cmW / 3
+        #    loCut = 1280
+        #    # hiCut = loCut * 2
+        #    hiCut = 1920
+        #    data[0:3, 0:loCut] = 3
+        #    data[0:3, hiCut:cmW] = 3
+        #    data[cmH-3:cmH, 0:loCut] = 3
+        #    data[cmH-3:cmH, hiCut:cmW] = 3
+
+        # mask off all but the two cloud confidence bits
+        if (item == 'qf1_viirscmip'):
+            numpy.bitwise_and(data, 0x0C, out=data)
+            # LOG.info("TOT SIZE: %d", data.size)
+            # mask off the Cloud Mask Quality Pixel, where zero, we don't use CM
+            # LOG.info("ZERO COUNT BEF: %d", data.size - numpy.count_nonzero(data))
+            # cmqp = numpy.copy(data)
+            # badcm = numpy.where((cmqp & 0x03) == 0)
+            # goodcm = numpy.where((cmqp & 0x03) != 0)
+            # LOG.info("BADCM SIZE: %d", len(badcm))
+            # cmqp = (numpy.invert(cmqp & 0x03))
+            # cmqp = (cmqp * 16)
+            # cmqp = numpy.invert(cmqp)
+            # cmqp = cmqp & 0x03
+            # numpy.bitwise_and(cmqp, 0x03, out=cmqp)
+            # cmqp = (cmqp * 4)
+            # LOG.info("ZERO COUNT AFT: %d", cmqp.size - numpy.count_nonzero(cmqp))
+
+            # mask off the actual Cloud Mask bits
+            # bowtie = numpy.where(data == 0)
+            # LOG.info("BOWTIE SIZE: %d", len(bowtie))
+            # this is the one line that usually works
+            # numpy.bitwise_and(data, 0x0C, out=data)
+            # data[bowtie] = 0x0C
+            # data[badcm] = 255
+            # data[goodcm] = 5
+            # numpy.bitwise_or(cmqp, data, out=data)
+            # numpy.bitwise_or((data & 0x0C), cmqp, out=data)
+            # LOG.info("unique: %s", numpy.unique(data))
 
         return data
 

@@ -3,12 +3,10 @@
 """Functions and mappings for taking rempapped polar-orbitting data and
 rescaling it to a useable range for the backend using the data, usually a
 0-255 8-bit range or a 0-65535 16-bit range.
-
 :attention:
     A scaling function is not guarenteed to not change the
     original data array passed.  If fact, it is faster in most cases
     to change the array in place.
-
 :author:       David Hoese (davidh)
 :author:       Eva Schiffer (evas)
 :contact:      david.hoese@ssec.wisc.edu
@@ -16,35 +14,28 @@ rescaling it to a useable range for the backend using the data, usually a
 :copyright:    Copyright (c) 2013 University of Wisconsin SSEC. All rights reserved.
 :date:         Dec 2013
 :license:      GNU GPLv3
-
 Copyright (C) 2013 Space Science and Engineering Center (SSEC),
  University of Wisconsin-Madison.
-
    This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation, either version 3 of the License, or
    (at your option) any later version.
-
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
    GNU General Public License for more details.
-
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
 This file is part of the polar2grid software package. Polar2grid takes
 satellite observation data, remaps it, and writes it to a file format for
 input into another program.
 Documentation: http://www.ssec.wisc.edu/software/polar2grid/
-
     Written by David Hoese    January 2013
     University of Wisconsin-Madison 
     Space Science and Engineering Center
     1225 West Dayton Street
     Madison, WI  53706
     david.hoese@ssec.wisc.edu
-
 """
 __docformat__ = "restructuredtext en"
 
@@ -99,17 +90,12 @@ def passive_scale(img, **kwargs):
 
 def linear_flexible_scale(img, min_out, max_out, min_in=None, max_in=None, flip=False, **kwargs):
     """Flexible linear scaling by specifying what you want output, not the parameters of the linear equation.
-
     This scaling function stops humans from doing math...let the computers do it.
-
     - If you aren't sure what the valid limits of your data are, only specify 
         the min and max output values. The input minimum and maximum will be
         computed. Note that this could add a considerable amount of time to
         the calculation.
     - If you know the limits, specify the output and input ranges.
-    - If you want to flip the data range (ex. -16 to 40 data becomes 237 to 0
-        data) then specify the ranges as needed (ex. min_out=237, max_out=0,
-        min_in=-16, max_in=40). The flip happens automatically.
     - If the data needs to be clipped to the output range, specify 1 or 0 for
         the "clip" keyword. Note that most backends will do this to fit the
         data type of the output format.
@@ -124,16 +110,10 @@ def linear_flexible_scale(img, min_out, max_out, min_in=None, max_in=None, flip=
         max_in = min_in + 1.0
     LOG.debug("Input minimum: %f, Input maximum: %f" % (min_in, max_in))
 
-    # TJJ Test - sqrt of 0 to 1 output image
-    LOG.debug("TJJ - TEST SQUARE")
-    img = numpy.square(img)
-
     if flip:
-        LOG.debug("YES, FLIPPING")
         m = (min_out - max_out) / (max_in - min_in)
         b = max_out - m * min_in
     else:
-        LOG.debug("NO FLIP")
         m = (max_out - min_out) / (max_in - min_in)
         b = min_out - m * min_in
     LOG.debug("Linear parameters: m=%f, b=%f", m, b)
@@ -148,9 +128,7 @@ def linear_flexible_scale(img, min_out, max_out, min_in=None, max_in=None, flip=
 
 def sqrt_scale(img, min_out, max_out, inner_mult=None, outer_mult=None, min_in=0.0, max_in=1.0, **kwargs):
     """Square root enhancement
-
     Note that any values below zero are clipped to zero before calculations.
-
     Default behavior (for regular 8-bit scaling):
         new_data = sqrt(data * 100.0) * 25.5
     """
@@ -158,7 +136,8 @@ def sqrt_scale(img, min_out, max_out, inner_mult=None, outer_mult=None, min_in=0
     if min_out != 0 and min_in != 0:
         raise RuntimeError("'sqrt_scale' does not support a `min_out` or `min_in` not equal to 0")
     inner_mult = inner_mult if inner_mult is not None else (100.0 / max_in)
-    outer_mult = outer_mult if outer_mult is not None else max_out / numpy.sqrt(inner_mult)
+    outer_mult = outer_mult if outer_mult is not None else max_out / numpy.sqrt(inner_mult * max_in)
+    LOG.debug("Sqrt scaling using 'inner_mult'=%f and 'outer_mult'=%f", inner_mult, outer_mult)
     img[img < 0] = 0  # because < 0 cant be sqrted
 
     if inner_mult != 1:
@@ -221,22 +200,17 @@ def lookup_scale(img, min_out, max_out, min_in, max_in, table_name="crefl", **kw
 def brightness_temperature_scale(img, threshold, min_in, max_in, min_out, max_out,
                                  threshold_out=None, units="kelvin", **kwargs):
     """Brightness temperature scaling is a piecewise function with two linear sub-functions.
-
     Temperatures less than `threshold` are scaled linearly from `threshold_out` to `max_out`. Temperatures greater than
     or equal to `threshold` are scaled linearly from `min_out` to `threshold_out`.
-
     In previous versions, this function took the now calculated linear parameters, ``m`` and ``b`` for
     each sub-function. For historical documentation here is how these were converted to the current method:
-
         equation 1: middle_file_value = low_max - (low_mult * threshold)
         equation 2: max_out = low_max - (low_mult * min_temp)
         equation #1 - #2: threshold_out - max_out = low_mult * threshold + low_mult * min_temp = low_mult (threshold + min_temp) => low_mult = (threshold_out - max_out) / (min_temp - threshold)
         equation 3: middle_file_value = high_max - (high_mult * threshold)
         equation 4: min_out = high_max - (high_mult * max_temp)
         equation #3 - #4: (middle_file_value - min_out) = high_mult * (max_in - threshold)
-
     :param units: If 'celsius', convert 'in' parameters from kelvin to degrees celsius before performing calculations.
-
     """
     LOG.debug("Running 'bt_scale'...")
     if units == "celsius":
@@ -261,7 +235,6 @@ def brightness_temperature_scale(img, threshold, min_in, max_in, min_out, max_ou
 def linear_brightness_temperature_scale(img, min_out, max_out, min_in=None, max_in=None,
                                         units="kelvin", flip=True, **kwargs):
     """Linearly scale brightness temperatures.
-
     :param units: If 'celsius', convert 'in' parameters from kelvin to degrees celsius before performing calculations.
     """
     if units == "celsius":
@@ -272,13 +245,10 @@ def linear_brightness_temperature_scale(img, min_out, max_out, min_in=None, max_
 
 def temperature_difference_scale(img, min_in, max_in, min_out, max_out, **kwargs):
     """Scale data linearly. Then clip the data to the following values based on `min_out` and `max_out`:
-
         - clip_min = min_out + 5
         - clip_max = 0.8 * (max_out - min_out)
-
     Values outside of the threshold are set to -1 from the 'clip_min' and +1 from the 'clip_max'. The data is scaled
     linearly to the clip limits.
-
     Basic behavior is to put -10 to 10 range into 5 to 205 with clipped data set to 4 and 206.
     """
     LOG.debug("Running 'temperature_difference_scale'...")
@@ -292,7 +262,6 @@ def temperature_difference_scale(img, min_in, max_in, min_out, max_out, **kwargs
 
 def lst_scale(img, min_out, max_out, min_in, max_in, fill_out, **kwargs):
     """Linearly scale data to +-5 of the output limits. Clip higher values and mask lower values.
-
     linear scale from a to b range to c to d range; if greater than b, set to d instead of scaling, if less than a, set to fill value x instead of scaling
     for winter/normal (a, b) is (233.2K, 322.0K) and (c, d) is (5, 245)
     for summer        (a, b) is (255.4K, 344.3K) and (c, d) is (5, 245)
@@ -307,8 +276,7 @@ def lst_scale(img, min_out, max_out, min_in, max_in, fill_out, **kwargs):
 
 
 def ctt_scale(img, min_out, max_out, min_in, max_in, flip=True, **kwargs):
-    """The original cloud top temperature scaling.
-
+    """cloud top temperature scaling.
     The original was for unsigned 8-bit files from 10 to 250.
     """
     img = linear_flexible_scale(img, min_out+10, max_out-5, min_in, max_in, flip=flip, **kwargs)
@@ -321,7 +289,6 @@ def ndvi_scale(img, min_out, max_out, min_in=-1.0, max_in=1.0, threshold=0.0, th
     then linearly scale values below `threshold` (default 0) to between `min_out` and `threshold_out`. Then linearly scale
     values greater than or equal to `threshold` between `threshold_out` and `max_out`. The `threshold_out` value
     defaults to the value at about 19.2% of the output range (calculated as 49/255 * `max_out`).
-
     """
     # clip to the min_before max_before range
     numpy.clip(img, min_in, max_in, img)
@@ -338,6 +305,11 @@ def ndvi_scale(img, min_out, max_out, min_in=-1.0, max_in=1.0, threshold=0.0, th
 
     return img
 
+def debug_scale(img, min_out, max_out, min_in=0, max_in=1.0, percent=0.5, **kwargs):
+    # Put all valid at the top of the output scale
+    LOG.debug("Running debug scale")
+    new_range = (max_out - min_out) * percent
+    return linear_flexible_scale(img, max_out - new_range, max_out, min_in=min_in, max_in=max_in, **kwargs)
 
 class Rescaler(roles.INIConfigReader):
     # Fields used to match a product object to it's correct configuration
@@ -364,6 +336,7 @@ class Rescaler(roles.INIConfigReader):
         'ndvi': ndvi_scale,
         'unlinear': unlinear_scale,
         'lookup': lookup_scale,
+        'debug': debug_scale,
     }
 
     def __init__(self, *rescale_configs, **kwargs):
@@ -374,7 +347,7 @@ class Rescaler(roles.INIConfigReader):
         # kwargs["fill_out"] = kwargs.get("fill_out", "nan")
         kwargs["float_kwargs"] = self._float_kwargs()
         kwargs["boolean_kwargs"] = self._bool_kwargs()
-        LOG.info("Loading rescale configuration files:\n\t%s", "\n\t".join(rescale_configs))
+        LOG.debug("Loading rescale configuration files:\n\t%s", "\n\t".join(rescale_configs))
         super(Rescaler, self).__init__(*rescale_configs, **kwargs)
 
     def _bool_kwargs(self):
@@ -392,23 +365,48 @@ class Rescaler(roles.INIConfigReader):
         args.remove("table_name")  # string
         args.add("min_out")
         args.add("max_out")
+        args.add("percent")
         return args
 
     def register_rescale_method(self, name, func, **kwargs):
         self.rescale_methods[name] = (func, kwargs)
 
+    def _rescale_data(self, method, data, good_data_mask, rescale_options, fill_value, clip=True, inc_by_one=False):
+        try:
+            LOG.debug("Scaling data with method %s and arguments %r", method, rescale_options)
+            rescale_func = self.rescale_methods[method]
+            good_data = data[good_data_mask]
+            good_data = rescale_func(good_data, **rescale_options)
+
+            # Note: If the output fill value is anything that is affected by clipping or incrementing then
+            # certain scalings may fail if they decided some values could not be calculated
+            if clip:
+                LOG.debug("Clipping data between %f and %f", rescale_options["min_out"], rescale_options["max_out"])
+                good_data = numpy.clip(good_data, rescale_options["min_out"], rescale_options["max_out"], out=good_data)
+
+            data[good_data_mask] = good_data
+            # need to recalculate mask here in case the rescaling method assigned some new fill values
+            # rescaling functions should set NaN for invalid values
+            good_data_mask &= ~mask_helper(data, numpy.nan)
+            data[~good_data_mask] = fill_value
+
+            if inc_by_one:
+                LOG.debug("Incrementing data by 1 so 0 acts as a fill value")
+                data[good_data_mask] += 1
+
+            return data
+        except StandardError:
+            LOG.error("Unexpected error during rescaling")
+            raise
+
     def rescale_product(self, gridded_product, data_type, inc_by_one=False, fill_value=None):
         """Rescale a gridded product based on how the rescaler is configured.
-
         The caller should know if it wants to increment the output data by 1 (`inc_by_one` keyword).
-
         :param data_type: Desired data type of the output data
         :param inc_by_one: After rescaling should 1 be added to all data values to leave the minumum value as the fill
-
         FUTURE: dec_by_one (mutually exclusive to inc_by_one)
-
         """
-        all_meta = gridded_product["grid_definition"].copy()
+        all_meta = gridded_product["grid_definition"].copy(as_dict=True)
         all_meta.update(**gridded_product)
         kwargs = dict((k, all_meta.get(k, None)) for k in self.id_fields)
         # we don't want the product's current data_type, we want what the output will be
@@ -422,7 +420,6 @@ class Rescaler(roles.INIConfigReader):
         LOG.debug("Product %s found in rescale config: %r", gridded_product["product_name"], rescale_options)
 
         method = rescale_options.pop("method")
-        rescale_func = self.rescale_methods[method]
         # if the configuration file didn't force these then provide a logical default
         clip = rescale_options.pop("clip", True)
         min_out, max_out = dtype2range[kwargs["data_type"]]
@@ -431,38 +428,23 @@ class Rescaler(roles.INIConfigReader):
         rescale_options.setdefault("units", gridded_product.get("units", "kelvin"))
         rescale_options["fill_out"] = fill_value
 
-        try:
-            LOG.debug("Scaling data with method %s and arguments %r", method, rescale_options)
-            data = gridded_product.copy_array(read_only=False)
-            good_data_mask = ~gridded_product.get_data_mask()
-            good_data = data[good_data_mask]
-            good_data = rescale_func(good_data, **rescale_options)
-
-            # Note: If the output fill value is anything that is affected by clipping or incrementing then
-            # certain scalings may fail if they decided some values could not be calculated
-            if clip:
-                LOG.debug("Clipping data between %f and %f", rescale_options["min_out"], rescale_options["max_out"])
-                good_data = numpy.clip(good_data, rescale_options["min_out"], rescale_options["max_out"], out=good_data)
-
-            data[good_data_mask] = good_data
-            data[~good_data_mask] = fill_value
-
-            if inc_by_one:
-                LOG.debug("Incrementing data by 1 so 0 acts as a fill value")
-                # need to recalculate mask here in case the rescaling method assigned some new fill values
-                data[mask_helper(data, fill_value)] += 1
-        except StandardError:
-            LOG.error("Unexpected error during rescaling")
-            raise
-
+        data = gridded_product.copy_array(read_only=False)
+        good_data_mask = ~gridded_product.get_data_mask()
+        if rescale_options.get("separate_rgb", True) and data.ndim == 3:
+            data = numpy.concatenate((
+                [self._rescale_data(method, data[0], good_data_mask[0], rescale_options, fill_value, clip=clip, inc_by_one=inc_by_one)],
+                [self._rescale_data(method, data[1], good_data_mask[1], rescale_options, fill_value, clip=clip, inc_by_one=inc_by_one)],
+                [self._rescale_data(method, data[2], good_data_mask[2], rescale_options, fill_value, clip=clip, inc_by_one=inc_by_one)],
+            ))
+        else:
+            data = self._rescale_data(method, data, good_data_mask, rescale_options, fill_value, clip=clip, inc_by_one=inc_by_one)
 
         log_level = logging.getLogger('').handlers[0].level or 0
         # Only perform this calculation if it will be shown, its very time consuming
         if log_level <= logging.DEBUG:
             try:
-                if good_data_mask is None:
-                    good_data_mask = ~gridded_product.get_data_mask("grid_data")
-                LOG.debug("Data min: %f, max: %f" % (data[good_data_mask].min(), data[good_data_mask].max()))
+                # assumes NaN fill value
+                LOG.debug("Data min: %f, max: %f" % (numpy.nanmin(data), numpy.nanmax(data)))
             except StandardError:
                 LOG.debug("Couldn't get min/max values for %s (all fill data?)", gridded_product["product_name"])
 
