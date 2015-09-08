@@ -214,10 +214,15 @@ class VIIRSSDRReader(BaseFileReader):
         bit_mask = None
         if (item == 'qf1_viirscmip'):
             LOG.error("TJJ EXTRACTING CM FROM QF1...")
-            dtype = numpy.uint8
-            fill = 0
+            dtype = numpy.float32
+            fill = numpy.nan
+            data = self[var_info.var_path].value
+            mask = (data & 0x03) == 0
+            data &= 0x0C
+            data = data.astype(dtype)
+        else:
+            data = self[var_info.var_path].value.astype(dtype)
 
-        data = self[var_info.var_path].value.astype(dtype)
         # if (item == 'qf1_viirscmip'):
             # mask off all but the two cloud confidence bits
             # numpy.bitwise_and(data, 0x0C, out=data)
@@ -233,11 +238,15 @@ class VIIRSSDRReader(BaseFileReader):
             LOG.debug("TJJ No scaling factors for %s", item)
 
         # Get the mask for the data (based on unscaled data)
-        mask = None
-        if scaling_factors is not None and var_info.scaling_mask_func is not None:
+        if item == "qf1_viirscmip":
+            pass
+            #mask = None  # np.zeros_like(data, dtype=numpy.bool)
+        elif scaling_factors is not None and var_info.scaling_mask_func is not None:
             mask = var_info.scaling_mask_func(data)
         elif scaling_factors is None and var_info.nonscaling_mask_func is not None:
             mask = var_info.nonscaling_mask_func(data)
+        else:
+            mask = None
 
         # Scale the data
         scaling_mask = None
@@ -274,8 +283,8 @@ class VIIRSSDRReader(BaseFileReader):
         #    data[cmH-3:cmH, hiCut:cmW] = 3
 
         # mask off all but the two cloud confidence bits
-        if (item == 'qf1_viirscmip'):
-            numpy.bitwise_and(data, 0x0C, out=data)
+        # if (item == 'qf1_viirscmip'):
+            # numpy.bitwise_and(data, 0x0C, out=data)
             # LOG.info("TOT SIZE: %d", data.size)
             # mask off the Cloud Mask Quality Pixel, where zero, we don't use CM
             # LOG.info("ZERO COUNT BEF: %d", data.size - numpy.count_nonzero(data))
@@ -301,6 +310,8 @@ class VIIRSSDRReader(BaseFileReader):
             # data[goodcm] = 5
             # numpy.bitwise_or(cmqp, data, out=data)
             # numpy.bitwise_or((data & 0x0C), cmqp, out=data)
+            # so each flag is easier to visualize
+            # data = data * 16
             # LOG.info("unique: %s", numpy.unique(data))
 
         return data

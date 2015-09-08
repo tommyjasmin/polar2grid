@@ -696,7 +696,10 @@ class Frontend(roles.FrontendRole):
         try:
             # TODO: Do something with data type
             LOG.info("TJJ file_key: '%s', filename: '%s'", file_key, filename)
-            shape = file_reader.write_var_to_flat_binary(file_key, filename)
+            if file_key == "qf1_viirscmip":
+	        shape = file_reader.write_var_to_flat_binary(file_key, filename)
+            else:
+	        shape = file_reader.write_var_to_flat_binary(file_key, filename)
             LOG.info("TJJ after write_var_to_flat_binary...") 
             rows_per_scan = GEO_PAIRS[product_def.geo_pair_name].rows_per_scan
         except StandardError:
@@ -705,12 +708,12 @@ class Frontend(roles.FrontendRole):
             raise
 
         if (file_key == "qf1_viirscmip"):
-            LOG.info("TJJ CM, fill val TBD...") 
+            LOG.info("TJJ CM, fill val NaN") 
             one_swath = containers.SwathProduct(
                 product_name=product_name, description=product_def.description, units=product_def.units,
                 satellite=file_reader.satellite, instrument=file_reader.instrument,
                 begin_time=file_reader.begin_time, end_time=file_reader.end_time,
-                swath_definition=swath_definition, fill_value=0,
+                swath_definition=swath_definition, fill_value=numpy.nan,
                 swath_rows=shape[0], swath_columns=shape[1], data_type=numpy.float32, swath_data=filename,
                 source_filenames=file_reader.filepaths, data_kind=product_def.data_kind, rows_per_scan=rows_per_scan
             )
@@ -1108,7 +1111,6 @@ class Frontend(roles.FrontendRole):
             # clip negative values to 0 before the sqrt
             inner_sqrt[inner_sqrt < 0] = 0
             numpy.sqrt(inner_sqrt, out=output_data)
->>>>>>> develop
 
             # Update from Curtis Seaman, increase max radiance curve until less than 0.5% is saturated
             saturation_pct = float(numpy.count_nonzero(dnb_data > max_val)) / dnb_data.size

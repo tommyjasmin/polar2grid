@@ -391,8 +391,9 @@ class Rescaler(roles.INIConfigReader):
             data[~good_data_mask] = fill_value
 
             if inc_by_one:
-                LOG.debug("Incrementing data by 1 so 0 acts as a fill value")
-                data[good_data_mask] += 1
+                if (rescale_options['product_name'] != "nightlights_dnb"):
+                    LOG.debug("Incrementing data by 1 so 0 acts as a fill value")
+                    data[good_data_mask] += 1
 
             return data
         except StandardError:
